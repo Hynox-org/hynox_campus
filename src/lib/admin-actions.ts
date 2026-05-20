@@ -138,12 +138,12 @@ export async function bulkOnboardUsers(users: PreRegisterUser[]) {
 /**
  * Creates a new institution.
  */
-export async function createInstitution(name: string, code: string) {
+export async function createInstitution(name: string, code: string, type: 'school' | 'college' = 'college') {
   const supabase = await createClient();
   
   const { data, error } = await supabase
     .from('institutions')
-    .insert({ name, code })
+    .insert({ name, code, type })
     .select()
     .single();
 
