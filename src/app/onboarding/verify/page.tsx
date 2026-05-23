@@ -26,14 +26,17 @@ export default async function OnboardingVerifyPage({ searchParams }: PageProps) 
 
   const supabase = await createClient();
 
-  // Validate the onboarding token by searching the profiles table (join with institutions to get the name)
-  const { data: profile, error } = await supabase
-    .from('profiles')
-    .select('*, institutions(name)')
-    .eq('onboarding_token', token)
+  // Validate the onboarding token directly in core schema
+  const { data: invite, error } = await supabase
+    .schema('core')
+    .from('user_invitations')
+    .select('*, users(*)')
+    .eq('token', token)
     .single();
 
-  if (error || !profile) {
+  const dbUser = invite?.users as any;
+
+  if (error || !invite || !dbUser || dbUser.deleted_at) {
     return (
       <ErrorLayout 
         title="Invalid Link" 
@@ -42,8 +45,8 @@ export default async function OnboardingVerifyPage({ searchParams }: PageProps) 
     );
   }
 
-  // Check if this profile has already been successfully linked / onboarded
-  if (profile.is_onboarded && profile.id) {
+  // Check if invitation has already been accepted
+  if (invite.status === 'accepted' || dbUser.status === 'active') {
     return (
       <ErrorLayout 
         title="Link Already Activated" 
@@ -53,17 +56,40 @@ export default async function OnboardingVerifyPage({ searchParams }: PageProps) 
     );
   }
 
-  // Check if token has expired
+  // Check if token has expired or is revoked/failed
   const now = new Date();
-  const expiresAt = profile.onboarding_token_expires_at ? new Date(profile.onboarding_token_expires_at) : null;
-  if (expiresAt && now > expiresAt) {
+  const expiresAt = invite.expires_at ? new Date(invite.expires_at) : null;
+  const isExpired = expiresAt && now > expiresAt;
+  
+  if (invite.status === 'expired' || isExpired || invite.status === 'revoked' || invite.status === 'failed') {
     return (
       <ErrorLayout 
         title="Link Expired" 
-        message="This onboarding link has expired. For security reasons, invitations expire after 7 days. Please contact your institution admin for a new link." 
+        message="This onboarding link has expired, failed, or been revoked. For security reasons, invitations expire after 7 days. Please contact your institution admin for a new link." 
       />
     );
   }
+
+  // Fetch institution name defensively if tenant_id exists
+  let institutionName: string | undefined = undefined;
+  if (dbUser.tenant_id) {
+    const { data: inst } = await supabase
+      .schema('institution')
+      .from('institutions')
+      .select('name')
+      .eq('id', dbUser.tenant_id)
+      .single();
+    if (inst) {
+      institutionName = inst.name;
+    }
+  }
+
+  // Resolve primary role dynamically using the database priority mapping RPC
+  const { data: resolvedRole } = await supabase
+    .schema('core')
+    .rpc('get_user_primary_role', { target_user_id: dbUser.id });
+
+  const primaryRole = (resolvedRole as string) || 'public';
 
   // Formulate friendly mismatch error message if present
   let initialError = null;
@@ -79,10 +105,10 @@ export default async function OnboardingVerifyPage({ searchParams }: PageProps) 
 
       <VerifyClient 
         token={token} 
-        email={profile.email} 
-        fullName={profile.full_name || 'Hynox Member'} 
-        role={profile.role} 
-        institutionName={profile.institutions?.name}
+        email={dbUser.email} 
+        fullName={dbUser.full_name || 'Hynox Member'} 
+        role={primaryRole} 
+        institutionName={institutionName}
         initialError={initialError}
       />
     </div>

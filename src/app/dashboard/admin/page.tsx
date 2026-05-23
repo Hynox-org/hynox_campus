@@ -78,7 +78,7 @@ export default function AdminDashboard() {
   }, []);
 
   async function fetchInstitutions() {
-    const { data } = await supabase.from('institutions').select('*');
+    const { data } = await supabase.schema('institution').from('institutions').select('*');
     if (data) setInstitutions(data);
   }
 
@@ -148,7 +148,7 @@ export default function AdminDashboard() {
     setIsLoading(false);
   };
 
-  const handleCreateTopicDirect = async (levelId: string, title: string, type: 'theory' | 'lab', content: string, toolsStr: string) => {
+  const handleCreateTopicDirect = async (levelId: string, title: string, type: 'theory' | 'lab', content: string, toolsStr: string, videoUrl?: string) => {
     setIsLoading(true);
     const level = selectedCourseSyllabus.find(l => l.id === levelId);
     const orderIndex = level ? level.topics.length : 0;
@@ -159,7 +159,8 @@ export default function AdminDashboard() {
       type,
       content,
       tools,
-      order_index: orderIndex
+      order_index: orderIndex,
+      video_url: videoUrl
     });
     if (res.success) {
       if (selectedCourseId) selectCourse(selectedCourseId);
@@ -1062,6 +1063,16 @@ export default function AdminDashboard() {
                                         {topic.content && (
                                           <p className="text-[11px] text-slate-500 truncate max-w-[400px]">{topic.content}</p>
                                         )}
+                                        {topic.video_url && (
+                                          <a 
+                                            href={topic.video_url} 
+                                            target="_blank" 
+                                            rel="noreferrer" 
+                                            className="text-[10px] text-rose-400 hover:text-rose-350 font-bold inline-flex items-center gap-1 mt-1 hover:underline"
+                                          >
+                                            📺 YouTube Video Link
+                                          </a>
+                                        )}
                                       </div>
 
                                       {/* Tools tags */}
@@ -1087,7 +1098,8 @@ export default function AdminDashboard() {
                                   const type = formData.get('type') as 'theory' | 'lab';
                                   const content = formData.get('content') as string;
                                   const toolsStr = formData.get('tools') as string;
-                                  handleCreateTopicDirect(level.id, title, type, content, toolsStr);
+                                  const videoUrl = formData.get('video_url') as string;
+                                  handleCreateTopicDirect(level.id, title, type, content, toolsStr, videoUrl);
                                   e.currentTarget.reset();
                                 }} className="bg-slate-950/60 border border-slate-800/60 rounded-2xl p-4 mt-4 space-y-4">
                                   <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-400">Add Topic / Lab to Level {lvlIdx + 1}</h4>
@@ -1114,6 +1126,11 @@ export default function AdminDashboard() {
                                       name="content"
                                       placeholder="Brief content summary / instructions"
                                       className="px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs focus:border-rose-500 focus:outline-none w-full"
+                                    />
+                                    <input 
+                                      name="video_url"
+                                      placeholder="YouTube Video URL (e.g. https://www.youtube.com/watch?...)"
+                                      className="px-4 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs focus:border-rose-500 focus:outline-none w-full md:col-span-2"
                                     />
                                   </div>
                                   <button

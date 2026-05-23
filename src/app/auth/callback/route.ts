@@ -22,42 +22,40 @@ export async function GET(request: Request) {
 
     // CASE 1: ONBOARDING LINK FLOW
     if (onboardingTokenCookie) {
-      // Find the pre-registered profile for this token
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('onboarding_token', onboardingTokenCookie)
+      // Find the pre-registered user and invitation for this token in the core schema directly
+      const { data: invite, error: inviteErr } = await supabase
+        .schema('core')
+        .from('user_invitations')
+        .select('*, users(*)')
+        .eq('token', onboardingTokenCookie)
         .single();
 
-      if (profile && !profileErr) {
+      const dbUser = invite?.users as any;
+
+      if (dbUser && !inviteErr) {
+        // Security check: Verify that the user is not soft deleted
+        if (dbUser.deleted_at) {
+          await supabase.auth.signOut();
+          return NextResponse.redirect(`${origin}/login?error=account_deleted`);
+        }
+
         // Security check: Verify that the Google logged-in email matches the pre-registered email
-        if (profile.email.toLowerCase() === user.email?.toLowerCase()) {
-          userRole = profile.role;
+        if (dbUser.email.toLowerCase() === user.email?.toLowerCase()) {
+          
+          // Note: The database trigger (core.handle_new_user) already linked core.users.auth_user_id
+          // and updated the invitation status to 'accepted' automatically upon auth.users insert.
+          
+          // 1. Fetch user's dynamic primary role using the database priority ordering
+          const { data: resolvedRole } = await supabase
+            .schema('core')
+            .rpc('get_user_primary_role', { target_user_id: dbUser.id });
 
-          // 1. Link the profile to the auth.uid() and mark onboarded, clearing the token
+          userRole = (resolvedRole as string) || 'public';
+
+          // 2. Re-sync JWT metadata using the database claim builder RPC
           await supabase
-            .from('profiles')
-            .update({
-              id: user.id,
-              is_onboarded: true,
-              onboarding_token: null,
-              onboarding_token_expires_at: null,
-            })
-            .eq('email', profile.email);
-
-          // 2. Sync to user_roles security table
-          await supabase
-            .from('user_roles')
-            .upsert(
-              { user_id: user.id, role: userRole },
-              { onConflict: 'user_id' }
-            );
-
-          // 3. Securely set the custom app claim via SQL to ensure immediate JWT sync
-          await supabase.rpc('set_user_role_claim', { 
-            target_user_id: user.id, 
-            target_role: userRole 
-          });
+            .schema('core')
+            .rpc('set_user_role_claim', { target_user_id: user.id });
           
           // Clear onboarding token cookie
           cookieStore.delete('hynox_onboarding_token');
@@ -65,55 +63,58 @@ export async function GET(request: Request) {
           // Email mismatch! Force signout to prevent session pollution
           await supabase.auth.signOut();
           return NextResponse.redirect(
-            `${origin}/onboarding/verify?token=${onboardingTokenCookie}&error=email_mismatch&expected=${encodeURIComponent(profile.email)}&received=${encodeURIComponent(user.email || '')}`
+            `${origin}/onboarding/verify?token=${onboardingTokenCookie}&error=email_mismatch&expected=${encodeURIComponent(dbUser.email)}&received=${encodeURIComponent(user.email || '')}`
           );
         }
       }
     } else {
       // CASE 2: DIRECT STANDARD LOGIN (Graceful Fallback)
-      // Check if a linked profile already exists
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
+      // Check if a linked user already exists directly in core.users
+      const { data: dbUser } = await supabase
+        .schema('core')
+        .from('users')
+        .select('id, deleted_at, status')
+        .eq('auth_user_id', user.id)
         .single();
 
-      if (profile && !profileErr) {
-        userRole = profile.role;
+      if (dbUser && !dbUser.deleted_at) {
+        // Fetch user's dynamic primary role
+        const { data: resolvedRole } = await supabase
+          .schema('core')
+          .rpc('get_user_primary_role', { target_user_id: dbUser.id });
+
+        userRole = (resolvedRole as string) || 'public';
+
+        // Re-sync claim dynamically
+        await supabase
+          .schema('core')
+          .rpc('set_user_role_claim', { target_user_id: user.id });
+      } else if (dbUser && dbUser.deleted_at) {
+        // Soft deleted user tries to login directly
+        await supabase.auth.signOut();
+        return NextResponse.redirect(`${origin}/login?error=account_deleted`);
       } else {
         // Fallback: Check if they are pre-registered but bypassed the email link (auto-link by email)
-        const { data: preRegProfile, error: preRegErr } = await supabase
-          .from('profiles')
-          .select('role')
+        const { data: preRegUser } = await supabase
+          .schema('core')
+          .from('users')
+          .select('id, email, deleted_at')
           .eq('email', user.email?.toLowerCase())
           .single();
 
-        if (preRegProfile && !preRegErr) {
-          userRole = preRegProfile.role;
+        if (preRegUser && !preRegUser.deleted_at) {
+          // Note: The database trigger (core.handle_new_user) already linked core.users.auth_user_id
+          // and updated invitation status upon auth.users insert. We query and set claims.
+          const { data: resolvedRole } = await supabase
+            .schema('core')
+            .rpc('get_user_primary_role', { target_user_id: preRegUser.id });
 
-          // Link them automatically since emails match!
-          await supabase
-            .from('profiles')
-            .update({
-              id: user.id,
-              is_onboarded: true,
-              onboarding_token: null,
-              onboarding_token_expires_at: null,
-            })
-            .eq('email', user.email?.toLowerCase());
-
-          await supabase
-            .from('user_roles')
-            .upsert(
-              { user_id: user.id, role: userRole },
-              { onConflict: 'user_id' }
-            );
+          userRole = (resolvedRole as string) || 'public';
 
           // Securely set the custom app claim via SQL
-          await supabase.rpc('set_user_role_claim', { 
-            target_user_id: user.id, 
-            target_role: userRole 
-          });
+          await supabase
+            .schema('core')
+            .rpc('set_user_role_claim', { target_user_id: user.id });
         } else {
           // Truly brand new public user (handled by handle_new_user database trigger)
           userRole = 'public';

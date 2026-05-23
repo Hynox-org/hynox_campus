@@ -23,6 +23,7 @@ export interface TopicData {
   content?: string;
   tools?: string[];
   order_index?: number;
+  video_url?: string;
 }
 
 export async function createCourse(course: CourseData) {

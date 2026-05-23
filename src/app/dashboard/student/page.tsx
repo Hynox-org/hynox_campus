@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { 
   BookOpen, 
@@ -15,22 +16,66 @@ import { supabase } from '@/lib/supabase';
 
 export default function StudentDashboard() {
   const [user, setUser] = useState<any>(null);
+  const [courses, setCourses] = useState<any[]>([]);
+  const [isLoadingCourses, setIsLoadingCourses] = useState(true);
 
   useEffect(() => {
-    async function fetchUser() {
+    async function fetchUserAndCourses() {
+      // Fetch user
       const { data: { user: activeUser } } = await supabase.auth.getUser();
       if (activeUser) {
         setUser(activeUser);
       }
-    }
-    fetchUser();
-  }, []);
 
-  const activeCourses = [
-    { id: 1, title: 'Advanced Web Engineering', code: 'CS-402', instructor: 'Dr. Evelyn Carter', progress: 75, nextClass: 'Tomorrow, 10:00 AM' },
-    { id: 2, title: 'Data Structures & Algorithms', code: 'CS-201', instructor: 'Prof. Marcus Vance', progress: 40, nextClass: 'Today, 2:00 PM' },
-    { id: 3, title: 'Artificial Intelligence Basics', code: 'CS-310', instructor: 'Dr. Sarah Jenkins', progress: 90, nextClass: 'Wednesday, 9:00 AM' },
-  ];
+      // Fetch courses
+      try {
+        const { data, error } = await supabase
+          .from('courses')
+          .select('*')
+          .order('name', { ascending: true });
+        
+        if (data && data.length > 0) {
+          const mapped = data.map((c: any, index: number) => {
+            let instructor = 'Industry Expert';
+            let progress = 0;
+            let nextClass = 'Fridays, 5:00 PM';
+            
+            if (c.code === 'FSD-COLLEGE') {
+              instructor = 'Hynox Engineering Lead';
+              progress = 30; // 30% progress default
+              nextClass = 'Today, 5:00 PM';
+            } else {
+              progress = [40, 75, 90][index % 3];
+              instructor = ['Dr. Evelyn Carter', 'Prof. Marcus Vance', 'Dr. Sarah Jenkins'][index % 3];
+              nextClass = ['Tomorrow, 10:00 AM', 'Today, 2:00 PM', 'Wednesday, 9:00 AM'][index % 3];
+            }
+            
+            return {
+              id: c.id,
+              title: c.name,
+              code: c.code,
+              instructor,
+              progress,
+              nextClass,
+              description: c.description
+            };
+          });
+          setCourses(mapped);
+        } else {
+          setCourses([
+            { id: '1', title: 'Advanced Web Engineering', code: 'CS-402', instructor: 'Dr. Evelyn Carter', progress: 75, nextClass: 'Tomorrow, 10:00 AM' },
+            { id: '2', title: 'Data Structures & Algorithms', code: 'CS-201', instructor: 'Prof. Marcus Vance', progress: 40, nextClass: 'Today, 2:00 PM' },
+            { id: '3', title: 'Artificial Intelligence Basics', code: 'CS-310', instructor: 'Dr. Sarah Jenkins', progress: 90, nextClass: 'Wednesday, 9:00 AM' },
+          ]);
+        }
+      } catch (err) {
+        console.error('Error fetching courses:', err);
+      } finally {
+        setIsLoadingCourses(false);
+      }
+    }
+    fetchUserAndCourses();
+  }, []);
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto">
@@ -68,7 +113,7 @@ export default function StudentDashboard() {
       {/* Quick Analytics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Registered Courses', value: '3 Modules', icon: BookOpen, color: 'cyan' },
+          { label: 'Registered Courses', value: `${isLoadingCourses ? '...' : courses.length} Modules`, icon: BookOpen, color: 'cyan' },
           { label: 'Attendance Average', value: '94.2%', icon: Clock, color: 'emerald' },
           { label: 'Current GPA Score', value: '9.0 / 10', icon: Award, color: 'indigo' },
           { label: 'Pending Assignments', value: '2 Overdue', icon: AlertCircle, color: 'rose' },
@@ -112,50 +157,71 @@ export default function StudentDashboard() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {activeCourses.map((course, idx) => (
-            <motion.div
-              key={course.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.1 }}
-              className="bg-slate-900/40 border border-slate-850 hover:border-cyan-500/30 rounded-3xl p-6 space-y-6 transition-all duration-300 hover:bg-slate-900/60 group relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-cyan-500/10 transition-all duration-300" />
-              
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <span className="px-2 py-0.5 bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-400 rounded-md font-mono">
-                    {course.code}
-                  </span>
-                  <h4 className="text-base font-bold text-white mt-3 leading-snug group-hover:text-cyan-400 transition-colors">
-                    {course.title}
-                  </h4>
-                  <p className="text-xs text-slate-500 mt-1 font-medium">{course.instructor}</p>
+          {isLoadingCourses ? (
+            Array.from({ length: 3 }).map((_, idx) => (
+              <div 
+                key={idx} 
+                className="bg-slate-900/20 border border-slate-900/80 rounded-3xl p-6 h-60 animate-pulse flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="h-4 bg-slate-850 rounded w-1/4" />
+                  <div className="h-6 bg-slate-800 rounded w-3/4" />
+                  <div className="h-4 bg-slate-850 rounded w-1/2" />
                 </div>
-                <button className="w-8 h-8 rounded-full bg-slate-950 hover:bg-cyan-500 hover:text-slate-950 flex items-center justify-center text-slate-400 transition-all active:scale-90">
-                  <PlayCircle className="w-5 h-5" />
-                </button>
+                <div className="h-6 bg-slate-850 rounded w-full" />
               </div>
+            ))
+          ) : (
+            courses.map((course, idx) => (
+              <Link 
+                href={`/dashboard/student/courses/${course.id}`} 
+                key={course.id}
+                className="block"
+              >
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="bg-slate-900/40 border border-slate-850 hover:border-cyan-500/30 rounded-3xl p-6 space-y-6 transition-all duration-300 hover:bg-slate-900/60 group relative overflow-hidden cursor-pointer"
+                >
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-cyan-500/10 transition-all duration-300" />
+                  
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <span className="px-2 py-0.5 bg-slate-950 border border-slate-800 text-[10px] font-bold text-slate-400 rounded-md font-mono">
+                        {course.code}
+                      </span>
+                      <h4 className="text-base font-bold text-white mt-3 leading-snug group-hover:text-cyan-400 transition-colors">
+                        {course.title}
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-1 font-medium">{course.instructor}</p>
+                    </div>
+                    <button className="w-8 h-8 rounded-full bg-slate-950 group-hover:bg-cyan-500 group-hover:text-slate-950 flex items-center justify-center text-slate-400 transition-all group-hover:scale-105 active:scale-95 shrink-0">
+                      <PlayCircle className="w-5 h-5" />
+                    </button>
+                  </div>
 
-              <div className="space-y-2 pt-2 border-t border-slate-800/40">
-                <div className="flex justify-between text-[10px] font-bold text-slate-500 uppercase">
-                  <span>Course Progress</span>
-                  <span className="text-white">{course.progress}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden p-0.5">
-                  <div 
-                    className="h-full rounded-full bg-cyan-400 transition-all duration-500" 
-                    style={{ width: `${course.progress}%` }} 
-                  />
-                </div>
-              </div>
+                  <div className="space-y-2 pt-2 border-t border-slate-800/40">
+                    <div className="flex justify-between text-[10px] font-bold text-slate-500 uppercase">
+                      <span>Course Progress</span>
+                      <span className="text-white">{course.progress}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden p-0.5">
+                      <div 
+                        className="h-full rounded-full bg-cyan-400 transition-all duration-500" 
+                        style={{ width: `${course.progress}%` }} 
+                      />
+                    </div>
+                  </div>
 
-              <div className="flex items-center gap-2.5 text-[10px] font-bold text-cyan-400/80 bg-cyan-500/5 border border-cyan-500/10 rounded-xl px-3 py-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                <span>Next Class: {course.nextClass}</span>
-              </div>
-            </motion.div>
-          ))}
+                  <div className="flex items-center gap-2.5 text-[10px] font-bold text-cyan-400/80 bg-cyan-500/5 border border-cyan-500/10 rounded-xl px-3 py-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                    <span>Next Class: {course.nextClass}</span>
+                  </div>
+                </motion.div>
+              </Link>
+            ))
+          )}
         </div>
       </div>
 
