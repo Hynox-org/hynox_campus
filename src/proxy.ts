@@ -1,85 +1,98 @@
-import { createServerClient } from '@supabase/ssr';
-import { NextResponse, type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from "next/server";
+import { updateSession } from "@/utils/supabase/middleware";
 
-export default async function proxy(request: NextRequest) {
-  let response = NextResponse.next({
-    request: {
-      headers: request.headers,
-    },
-  });
+export async function proxy(request: NextRequest) {
+  const { supabaseResponse, user } = await updateSession(request);
+  const { pathname } = request.nextUrl;
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
+  // Paths that can be accessed without logging in
+  const publicPaths = ["/login", "/auth/callback", "/onboarding/verify"];
+  
+  const isPublicPath = publicPaths.some(
+    (path) => pathname === path || pathname.startsWith(path + "/")
+  ) || pathname === "/"; // Allow root landing page
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const url = request.nextUrl.clone();
-
-  // 1. If trying to access dashboard paths
-  if (url.pathname.startsWith('/dashboard')) {
-    if (!user) {
-      url.pathname = '/login';
+  if (!user) {
+    // If not logged in and trying to access a protected page, redirect to login
+    if (!isPublicPath) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
       return NextResponse.redirect(url);
     }
-
-    // 2. Read role directly from JWT Custom Claim (app_metadata) - 0 database hits!
-    const role = user.app_metadata?.role || 'public';
-    const pathSegments = url.pathname.split('/');
-    const requestedDashboard = pathSegments[2]; // /dashboard/[segment]
-
-    const roleToPathMap: Record<string, string> = {
-      student: 'student',
-      teacher: 'teacher',
-      institution_admin: 'institution',
-      super_admin: 'admin',
-      public: 'public',
-    };
-
-    const expectedSegment = roleToPathMap[role];
-
-    // Redirect to correct dashboard path if segment is mismatched or missing
-    if (!requestedDashboard || requestedDashboard !== expectedSegment) {
-      url.pathname = `/dashboard/${expectedSegment || 'public'}`;
-      return NextResponse.redirect(url);
-    }
+    return supabaseResponse;
   }
 
-  // 3. If authenticated user hits /login, auto-redirect them to their dashboard
-  if (url.pathname === '/login' && user) {
-    const role = user.app_metadata?.role || 'public';
-    const roleToPathMap: Record<string, string> = {
-      student: 'student',
-      teacher: 'teacher',
-      institution_admin: 'institution',
-      super_admin: 'admin',
-      public: 'public',
-    };
-    url.pathname = `/dashboard/${roleToPathMap[role] || 'public'}`;
+  // User is authenticated, resolve their role
+  let role = user.app_metadata?.role || "public";
+  
+  // Phase 8 Rule: Ensure akshaykumar07.m@gmail.com is always super_admin
+  if (user.email === "akshaykumar07.m@gmail.com") {
+    role = "super_admin";
+  }
+
+  // Define dashboard URLs
+  const dashboardRoutes: Record<string, string> = {
+    super_admin: "/admin",
+    institution_admin: "/institution",
+    teacher: "/teacher",
+    trainer: "/teacher",
+    mentor: "/public",
+    student: "/student",
+    public: "/public",
+  };
+
+  const myDashboard = dashboardRoutes[role] || "/public";
+
+  // Prevent authenticated users from going back to login or root landing page '/'
+  if (pathname === "/login" || pathname === "/") {
+    const url = request.nextUrl.clone();
+    url.pathname = myDashboard;
     return NextResponse.redirect(url);
   }
 
-  return response;
+  // Enforce route protection by role dashboards
+  if (pathname.startsWith("/admin") && role !== "super_admin") {
+    const url = request.nextUrl.clone();
+    url.pathname = myDashboard;
+    return NextResponse.redirect(url);
+  }
+
+  if (pathname.startsWith("/institution") && role !== "institution_admin") {
+    const url = request.nextUrl.clone();
+    url.pathname = myDashboard;
+    return NextResponse.redirect(url);
+  }
+
+  if (pathname.startsWith("/teacher") && role !== "teacher" && role !== "trainer") {
+    const url = request.nextUrl.clone();
+    url.pathname = myDashboard;
+    return NextResponse.redirect(url);
+  }
+
+  if (pathname.startsWith("/student") && role !== "student") {
+    const url = request.nextUrl.clone();
+    url.pathname = myDashboard;
+    return NextResponse.redirect(url);
+  }
+
+  if (pathname.startsWith("/public") && role !== "public" && role !== "mentor") {
+    const url = request.nextUrl.clone();
+    url.pathname = myDashboard;
+    return NextResponse.redirect(url);
+  }
+
+  return supabaseResponse;
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/login'],
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - images, vector logos (.svg, .png, etc.)
+     */
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };
