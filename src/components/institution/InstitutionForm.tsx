@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { createInstitutionAction, getInstitutionTypesAction } from '@/lib/actions/institution-actions';
+import { createInstitutionAction, getInstitutionTypesAction } from '@/actions/institution-actions';
 
 interface InstitutionFormProps {
   onSuccess: () => void;

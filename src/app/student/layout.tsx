@@ -6,12 +6,9 @@ import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   BarChart2, 
-  BookOpen, 
   Brain, 
   FileText, 
   Briefcase, 
-  Video, 
-  Code2, 
   Settings, 
   LogOut, 
   Menu, 
@@ -21,7 +18,7 @@ import {
   GraduationCap,
   ChevronRight
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase/client';
 
 export default function StudentLayout({
   children,
@@ -55,15 +52,10 @@ export default function StudentLayout({
   };
 
   const menuItems = [
-    { label: 'Dashboard', path: '/dashboard/student', icon: BarChart2 },
-    { label: 'Study Materials', path: '/dashboard/student/study-materials', icon: BookOpen },
-    { label: 'Quizzes', path: '/dashboard/student/quizzes', icon: Brain },
-    { label: 'Resume Scanner', path: '/dashboard/student/resume-scanner', icon: FileText },
-    { label: 'Projects', path: '/dashboard/student/projects', icon: Briefcase },
-    { label: 'Job Guidance', path: '/dashboard/student/job-guidance', icon: Briefcase },
-    { label: 'Video Learning', path: '/dashboard/student/video-learning', icon: Video },
-    { label: 'Programming', path: '/dashboard/student/programming', icon: Code2 },
-    { label: 'AI Assistant', path: '/dashboard/student/ai-assistant', icon: Brain },
+    { label: 'Dashboard', path: '/student', icon: BarChart2 },
+    { label: 'Resume Scanner', path: '/student/resume-scanner', icon: FileText },
+    { label: 'Job Guidance', path: '/student/job-guidance', icon: Briefcase },
+    { label: 'AI Assistant', path: '/student/ai-assistant', icon: Brain },
   ];
 
   return (
@@ -107,9 +99,9 @@ export default function StudentLayout({
         {/* Bottom / Settings Section */}
         <div className="p-4 border-t border-[#002f9c]">
           <Link
-            href="/dashboard/student/settings"
+            href="/student/settings"
             className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
-              pathname === '/dashboard/student/settings'
+              pathname === '/student/settings'
                 ? 'bg-[#2b6cb0] text-white'
                 : 'text-white/80 hover:bg-white/10 hover:text-white'
             }`}
@@ -242,10 +234,10 @@ export default function StudentLayout({
 
               <div className="p-4 border-t border-[#002f9c]">
                 <Link
-                  href="/dashboard/student/settings"
+                  href="/student/settings"
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
-                    pathname === '/dashboard/student/settings'
+                    pathname === '/student/settings'
                       ? 'bg-[#2b6cb0] text-white'
                       : 'text-white/80 hover:bg-white/10 hover:text-white'
                   }`}

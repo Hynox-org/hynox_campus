@@ -1,5 +1,5 @@
 import React from 'react';
-import { createClient } from '@/lib/supabase-server';
+import { createClient } from '@/lib/supabase/server';
 import VerifyClient from './VerifyClient';
 import { ShieldAlert, GraduationCap, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';

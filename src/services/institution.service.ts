@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { Database } from '../types/database.types';
 
 export interface InstitutionInsertInput {
   name: string;
@@ -17,7 +18,7 @@ export interface InstitutionInsertInput {
 /**
  * Fetches all available institution types from the database.
  */
-export async function fetchInstitutionTypes(supabase: SupabaseClient) {
+export async function fetchInstitutionTypes(supabase: SupabaseClient<Database>) {
   const { data, error } = await supabase
     .schema('institution')
     .from('institution_types')
@@ -33,7 +34,7 @@ export async function fetchInstitutionTypes(supabase: SupabaseClient) {
 /**
  * Fetches the list of registered institutions.
  */
-export async function fetchInstitutionsList(supabase: SupabaseClient) {
+export async function fetchInstitutionsList(supabase: SupabaseClient<Database>) {
   const { data, error } = await supabase
     .schema('institution')
     .from('institutions')
@@ -49,7 +50,7 @@ export async function fetchInstitutionsList(supabase: SupabaseClient) {
 /**
  * Inserts a new institution into the database.
  */
-export async function insertNewInstitution(supabase: SupabaseClient, input: InstitutionInsertInput) {
+export async function insertNewInstitution(supabase: SupabaseClient<Database>, input: InstitutionInsertInput) {
   const { data, error } = await supabase
     .schema('institution')
     .from('institutions')
@@ -78,20 +79,25 @@ export async function insertNewInstitution(supabase: SupabaseClient, input: Inst
 /**
  * Verifies that the 'institution_created' audit log exists for a given institution slug.
  */
-export async function verifyAuditLog(supabase: SupabaseClient, slug: string) {
-  // Query core.audit_logs to see if the audit record has been inserted by the database trigger
+export async function verifyAuditLog(supabase: SupabaseClient<Database>, slug: string) {
   const { data, error } = await supabase
     .schema('core')
     .from('audit_logs')
     .select('id, event_type, metadata')
     .eq('event_type', 'institution_created')
-    .filter('metadata->>slug', 'eq', slug)
-    .limit(1);
+    .limit(10); // Fetch a small batch to scan
 
   if (error) {
     console.error('Audit verification query error:', error);
     return false;
   }
   
-  return data && data.length > 0;
+  if (!data) return false;
+
+  const match = data.find(log => {
+    const meta = log.metadata as Record<string, any> | null;
+    return meta && meta.slug === slug;
+  });
+
+  return !!match;
 }

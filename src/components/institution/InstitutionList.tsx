@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { getInstitutionsAction } from '@/lib/actions/institution-actions';
+import { getInstitutionsAction } from '@/actions/institution-actions';
 
 export interface InstitutionListRef {
   refreshList: () => void;

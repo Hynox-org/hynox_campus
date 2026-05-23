@@ -12,7 +12,7 @@ import {
   CheckCircle2, 
   Fingerprint
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase/client';
 
 export default function SettingsPage() {
   const [user, setUser] = useState<any>(null);

@@ -1,49 +1,30 @@
 'use server';
 
-import { createClient } from '../supabase-server';
+import { createClient } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/services/user.service';
 import { 
   fetchInstitutionTypes, 
   fetchInstitutionsList, 
   insertNewInstitution, 
   verifyAuditLog,
   InstitutionInsertInput 
-} from '../services/institution-service';
+} from '@/services/institution.service';
 
 /**
  * Checks if the current authenticated user has the 'super_admin' role.
  */
 async function checkSuperAdmin(supabase: any) {
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
+  const session = await getCurrentUser(supabase);
+  if (!session) {
     return { isAuthorized: false, userId: null, error: 'Authentication failed. Please log in.' };
   }
 
-  // Resolve core.users ID
-  const { data: profile } = await supabase
-    .schema('core')
-    .from('users')
-    .select('id')
-    .eq('auth_user_id', user.id)
-    .single();
-
-  if (!profile) {
-    return { isAuthorized: false, userId: null, error: 'Profile not found.' };
-  }
-
-  // Resolve roles
-  const { data: userRoles } = await supabase
-    .schema('core')
-    .from('user_roles')
-    .select('roles!inner(name)')
-    .eq('user_id', profile.id);
-
-  const isSuper = userRoles && userRoles.some((r: any) => r.roles?.name === 'super_admin');
-  
+  const isSuper = session.roles.includes('super_admin');
   if (!isSuper) {
-    return { isAuthorized: false, userId: profile.id, error: 'Access denied. Super Admin role required.' };
+    return { isAuthorized: false, userId: session.user.id, error: 'Access denied. Super Admin role required.' };
   }
 
-  return { isAuthorized: true, userId: profile.id };
+  return { isAuthorized: true, userId: session.user.id };
 }
 
 /**
@@ -114,7 +95,6 @@ export async function createInstitutionAction(input: Omit<InstitutionInsertInput
     }
 
     // 3. Verify the automated audit log trigger executed successfully
-    // Wait brief moment to allow trigger transaction to complete (if async or write delay, though pg triggers are transactional)
     const auditVerified = await verifyAuditLog(supabase, input.slug);
 
     return { 

@@ -1,16 +1,15 @@
 'use server';
 
 import { randomUUID } from 'crypto';
-import { createClient } from './supabase-server';
-import { UserRole } from './auth-utils';
-
+import { createClient } from '@/lib/supabase/server';
+import { getCurrentUser, softDeleteUser } from '@/services/user.service';
+import { sendOnboardingEmail } from '@/lib/email-service';
 import { headers } from 'next/headers';
-import { sendOnboardingEmail } from './email-service';
 
 export interface PreRegisterUser {
   email: string;
   full_name: string;
-  role: UserRole;
+  role: 'student' | 'teacher' | 'institution_admin' | 'super_admin' | 'public';
   institution_id?: string;
 }
 
@@ -22,47 +21,17 @@ export async function bulkOnboardUsers(users: PreRegisterUser[]) {
   const supabase = await createClient();
   
   // 1. Validate that the current requester is a Super Admin
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
+  const session = await getCurrentUser(supabase);
+  if (!session) {
     return { success: false, error: 'Unauthorized: No active user session found.' };
   }
 
-  // Get the admin's core.users.id
-  const { data: adminUser } = await supabase
-    .schema('core')
-    .from('users')
-    .select('id')
-    .eq('auth_user_id', user.id)
-    .single();
-
-  const adminId = adminUser?.id || null;
-
-  // Fetch admin roles from user_roles directly in the core schema
-  const { data: adminRoles, error: selectError } = await supabase
-    .schema('core')
-    .from('user_roles')
-    .select('roles!inner(name)')
-    .eq('user_id', adminId);
-
-  const isSuperAdmin = adminRoles && adminRoles.some((r: any) => r.roles?.name === 'super_admin');
-
-  if (selectError || !isSuperAdmin) {
-    console.error('Super Admin validation failed:', {
-      userId: user.id,
-      email: user.email,
-      adminRoles,
-      selectError
-    });
-    
-    const debugMsg = selectError 
-      ? `Database Error: ${selectError.message} (Code: ${selectError.code})` 
-      : `Access Denied: Your profile roles do not include 'super_admin'.`;
-      
-    return { 
-      success: false, 
-      error: `Only Super Admins can perform bulk onboarding. ${debugMsg} (User ID: ${user.id})` 
-    };
+  const isSuperAdmin = session.roles.includes('super_admin');
+  if (!isSuperAdmin) {
+    return { success: false, error: 'Only Super Admins can perform bulk onboarding.' };
   }
+
+  const adminId = session.user.id;
 
   // Fetch roles to get name-to-id mapping
   const { data: dbRoles, error: rolesFetchError } = await supabase
@@ -75,7 +44,6 @@ export async function bulkOnboardUsers(users: PreRegisterUser[]) {
   }
 
   const roleMap = new Map<string, string>(dbRoles.map(r => [r.name, r.id]));
-
   const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // 2. Prepare user records for insertion into core.users directly
@@ -84,7 +52,7 @@ export async function bulkOnboardUsers(users: PreRegisterUser[]) {
     full_name: u.full_name,
     tenant_id: u.institution_id || null,
     status: 'invited', // lifecycle state 1: invited
-    onboarding_source: 'excel_import' // lookup code
+    onboarding_source: 'excel_import'
   }));
 
   // 3. Upsert into core.users
@@ -105,7 +73,7 @@ export async function bulkOnboardUsers(users: PreRegisterUser[]) {
     const roleId = roleMap.get(originalInput?.role || 'public');
     return {
       user_id: uRecord.id,
-      role_id: roleId
+      role_id: roleId!
     };
   }).filter(r => r.role_id);
 
@@ -241,31 +209,25 @@ export async function bulkOnboardUsers(users: PreRegisterUser[]) {
 }
 
 /**
- * Creates a new institution.
+ * Server Action: Soft deletes a user profile.
  */
-export async function createInstitution(name: string, code: string, type: 'school' | 'college' = 'college') {
-  const supabase = await createClient();
-  
-  // Generate a URL-friendly slug from the name
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+export async function softDeleteUserAction(targetUserId: string, reason: string) {
+  try {
+    const supabase = await createClient();
+    const session = await getCurrentUser(supabase);
+    if (!session) {
+      return { success: false, error: 'Unauthorized: No active user session found.' };
+    }
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const creatorId = user ? (await supabase.schema('core').from('users').select('id').eq('auth_user_id', user.id).single()).data?.id : null;
+    const isSuperAdmin = session.roles.includes('super_admin');
+    const isInstAdmin = session.roles.includes('institution_admin');
+    if (!isSuperAdmin && !isInstAdmin) {
+      return { success: false, error: 'Permission denied: Super Admin or Institution Admin required.' };
+    }
 
-  const { data, error } = await supabase
-    .schema('institution')
-    .from('institutions')
-    .insert({ 
-      name, 
-      slug,
-      institution_code: code, 
-      institution_type: type,
-      status: 'active',
-      created_by: creatorId
-    })
-    .select()
-    .single();
-
-  if (error) return { success: false, error: error.message };
-  return { success: true, data };
+    await softDeleteUser(supabase, targetUserId, session.user.id, reason);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
 }

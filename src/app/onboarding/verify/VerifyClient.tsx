@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { GraduationCap, ArrowRight, ShieldCheck, Mail } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase/client';
 
 interface VerifyClientProps {
   token: string;

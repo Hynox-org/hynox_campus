@@ -1,13 +1,34 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
+import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { Database } from '@/types/database.types';
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
 
   if (code) {
-    const supabase = await createClient();
+    const cookieStore = await cookies();
+    const cookiesToSetMap = new Map<string, { value: string; options: any }>();
+
+    const supabase = createServerClient<Database>(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+              cookiesToSetMap.set(name, { value, options });
+            });
+          },
+        },
+      }
+    );
+
     const { data: { user }, error: authError } = await supabase.auth.exchangeCodeForSession(code);
 
     if (authError || !user) {
@@ -15,9 +36,7 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${origin}/login?error=auth_failed`);
     }
 
-    const cookieStore = await cookies();
     const onboardingTokenCookie = cookieStore.get('hynox_onboarding_token')?.value;
-
     let userRole = 'public';
 
     // CASE 1: ONBOARDING LINK FLOW
@@ -41,10 +60,6 @@ export async function GET(request: Request) {
 
         // Security check: Verify that the Google logged-in email matches the pre-registered email
         if (dbUser.email.toLowerCase() === user.email?.toLowerCase()) {
-          
-          // Note: The database trigger (core.handle_new_user) already linked core.users.auth_user_id
-          // and updated the invitation status to 'accepted' automatically upon auth.users insert.
-          
           // 1. Fetch user's dynamic primary role using the database priority ordering
           const { data: resolvedRole } = await supabase
             .schema('core')
@@ -103,8 +118,6 @@ export async function GET(request: Request) {
           .single();
 
         if (preRegUser && !preRegUser.deleted_at) {
-          // Note: The database trigger (core.handle_new_user) already linked core.users.auth_user_id
-          // and updated invitation status upon auth.users insert. We query and set claims.
           const { data: resolvedRole } = await supabase
             .schema('core')
             .rpc('get_user_primary_role', { target_user_id: preRegUser.id });
@@ -122,17 +135,26 @@ export async function GET(request: Request) {
       }
     }
 
+    // Refresh session to synchronize the cookie's JWT app_metadata claims with the database
+    await supabase.auth.refreshSession();
+
     // Role-to-dashboard redirect mapping
     const roleToPathMap: Record<string, string> = {
-      student: '/dashboard/student',
-      teacher: '/dashboard/teacher',
-      institution_admin: '/dashboard/institution',
-      super_admin: '/dashboard/admin',
-      public: '/dashboard/public',
+      student: '/student',
+      teacher: '/student',
+      institution_admin: '/institution',
+      super_admin: '/admin',
+      public: '/student',
     };
 
-    const redirectPath = roleToPathMap[userRole] || '/dashboard/public';
-    return NextResponse.redirect(`${origin}${redirectPath}`);
+    const redirectPath = roleToPathMap[userRole] || '/student';
+    
+    const redirectResponse = NextResponse.redirect(`${origin}${redirectPath}`);
+    cookiesToSetMap.forEach((cookieData, name) => {
+      redirectResponse.cookies.set(name, cookieData.value, cookieData.options);
+    });
+
+    return redirectResponse;
   }
 
   return NextResponse.redirect(`${origin}/login?error=invalid_request`);
