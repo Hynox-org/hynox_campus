@@ -1,5 +1,8 @@
 import { verifyInvitation } from "@/services/onboarding";
 import { signInWithGoogle } from "@/app/actions/auth-actions";
+import { getCurrentUser } from "@/services/auth";
+import { createClient } from "@/utils/supabase/server";
+import { redirect } from "next/navigation";
 import { Terminal, ShieldCheck, AlertTriangle } from "lucide-react";
 
 interface PageProps {
@@ -11,6 +14,36 @@ interface PageProps {
 
 export default async function OnboardingVerifyPage({ searchParams }: PageProps) {
   const { token, email } = await searchParams;
+
+  // 1. Check if the user is already authenticated
+  const currentUser = await getCurrentUser();
+  if (currentUser && currentUser.user) {
+    const dashboardRoutes: Record<string, string> = {
+      super_admin: "/admin",
+      institution_admin: "/institution",
+      teacher: "/teacher",
+      trainer: "/teacher",
+      student: "/student",
+    };
+    const dest = dashboardRoutes[currentUser.primaryRole] || "/public";
+    redirect(dest);
+  }
+
+  // 2. Check if the email parameter is already linked in core.users
+  if (email) {
+    const supabase = await createClient();
+    const { data: dbUser } = await supabase
+      .schema("core")
+      .from("users")
+      .select("auth_user_id")
+      .eq("email", email)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (dbUser && dbUser.auth_user_id) {
+      redirect("/login?message=AlreadyActivated");
+    }
+  }
 
   if (!token || !email) {
     return (

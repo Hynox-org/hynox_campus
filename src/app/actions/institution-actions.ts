@@ -3,9 +3,14 @@
 import { getCurrentUser } from "@/services/auth";
 import { 
   createInstitution, 
-  assignInstitutionAdmin 
+  assignInstitutionAdmin,
+  listInstitutionUsers
 } from "@/services/institution";
-import { processCsvOnboarding } from "@/services/onboarding";
+import { 
+  processCsvOnboarding,
+  listOnboardingInvitations,
+  regenerateInvitation 
+} from "@/services/onboarding";
 import { revalidatePath } from "next/cache";
 
 export async function createNewInstitutionAction(formData: FormData) {
@@ -84,3 +89,56 @@ export async function uploadCsvOnboardingAction(institutionId: string, csvConten
     return { error: error.message || "Failed to process CSV onboarding." };
   }
 }
+
+export async function listInvitationsAction() {
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    const invitations = await listOnboardingInvitations();
+    return { success: true, invitations };
+  } catch (error: any) {
+    return { error: error.message || "Failed to list invitations." };
+  }
+}
+
+export async function regenerateInvitationAction(invitationId: string) {
+  if (!invitationId) {
+    return { error: "Invitation ID is required." };
+  }
+
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    const res = await regenerateInvitation(invitationId, userDetails.user.id);
+    revalidatePath("/admin");
+    return { success: true, invitation: res };
+  } catch (error: any) {
+    return { error: error.message || "Failed to regenerate invitation." };
+  }
+}
+
+export async function listInstitutionUsersAction(institutionId: string) {
+  if (!institutionId) {
+    return { error: "Institution ID is required." };
+  }
+
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    const users = await listInstitutionUsers(institutionId);
+    return { success: true, users };
+  } catch (error: any) {
+    return { error: error.message || "Failed to list institution users." };
+  }
+}
+
+

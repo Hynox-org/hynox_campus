@@ -141,3 +141,43 @@ export async function getInstitutionDetails(institutionId: string) {
 
   return data;
 }
+
+export async function listInstitutionUsers(institutionId: string) {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .schema("core")
+    .from("users")
+    .select(`
+      id,
+      full_name,
+      email,
+      status,
+      created_at,
+      user_roles (
+        role:role_id (
+          name
+        )
+      )
+    `)
+    .eq("tenant_id", institutionId)
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map((u: any) => {
+    const roles = u.user_roles?.map((ur: any) => ur.role?.name) || [];
+    return {
+      id: u.id,
+      full_name: u.full_name,
+      email: u.email,
+      status: u.status,
+      created_at: u.created_at,
+      roles,
+    };
+  });
+}
+

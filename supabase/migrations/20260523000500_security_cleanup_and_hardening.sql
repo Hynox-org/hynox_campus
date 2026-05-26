@@ -355,7 +355,7 @@ REVOKE EXECUTE ON FUNCTION core.update_updated_at_column() FROM public, anon, au
 
 -- Helper functions: restrict public execute
 REVOKE EXECUTE ON FUNCTION core.get_current_user() FROM public, anon;
-GRANT EXECUTE ON FUNCTION core.get_current_user() TO authenticated, service_role, postgres;
+GRANT EXECUTE ON FUNCTION core.get_current_user() TO authenticated, anon, service_role, postgres;
 
 REVOKE EXECUTE ON FUNCTION core.get_user_tenant_id(UUID) FROM public, anon;
 GRANT EXECUTE ON FUNCTION core.get_user_tenant_id(UUID) TO authenticated, service_role, postgres;

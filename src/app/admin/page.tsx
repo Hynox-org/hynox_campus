@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/services/auth";
 import { listInstitutions } from "@/services/institution";
+import { listOnboardingInvitations } from "@/services/onboarding";
 import { redirect } from "next/navigation";
 import AdminPanel from "./admin-panel";
 
@@ -21,10 +22,20 @@ export default async function AdminPage() {
     console.error("Failed to load institutions:", error);
   }
 
+  // Fetch invitations
+  let invitations: any[] = [];
+  try {
+    invitations = await listOnboardingInvitations();
+  } catch (error) {
+    console.error("Failed to load invitations:", error);
+  }
+
   return (
     <AdminPanel 
       adminEmail={userDetails.authUser.email} 
       initialInstitutions={institutions} 
+      initialInvitations={invitations}
     />
   );
 }
+

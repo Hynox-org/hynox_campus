@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
+import { sendOnboardingEmail } from "@/utils/email";
 
 export interface OnboardingResult {
   email: string;
@@ -58,6 +59,13 @@ export async function processCsvOnboarding(
     .select("id, name");
 
   const rolesMap = new Map(rolesList?.map((r) => [r.name.toLowerCase(), r.id]));
+
+  // Fetch institutions to map name
+  const { data: insts } = await supabase
+    .schema("institution")
+    .from("institutions")
+    .select("id, name");
+  const instMap = new Map(insts?.map((i) => [i.id, i.name]));
 
   for (const row of parsedRows) {
     try {
@@ -147,7 +155,7 @@ export async function processCsvOnboarding(
           token: token,
           invited_by: invitedByUserId,
           expires_at: expiresAt,
-          status: "pending",
+          status: "created",
           invitation_type: invitationType,
         });
 
@@ -155,6 +163,32 @@ export async function processCsvOnboarding(
 
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
       const link = `${appUrl}/onboarding/verify?token=${token}&email=${encodeURIComponent(email)}`;
+
+      // Send automated email notification
+      const roleNameMap: Record<string, string> = {
+        student_onboarding: "Student",
+        trainer_onboarding: "Teacher / Trainer",
+        institution_admin_invite: "Institution Admin",
+        mentor_invite: "Mentor",
+      };
+      const roleLabel = roleNameMap[invitationType] || "Member";
+      const institutionName = instMap.get(institutionId) || "Hynox Campus";
+
+      let mailStatus = "sent";
+      try {
+        await sendOnboardingEmail(email, link, name, roleLabel, institutionName);
+      } catch (mailErr: any) {
+        console.error("Onboarding email dispatch failed:", mailErr);
+        mailStatus = "failed";
+      }
+
+      // Update dispatch status in database
+      await supabase
+        .schema("core")
+        .from("user_invitations")
+        .update({ status: mailStatus })
+        .eq("token", token);
+
       results.push({ email, status: "success", link });
     } catch (err: any) {
       results.push({
@@ -245,3 +279,149 @@ export async function verifyInvitation(token: string, email: string) {
     },
   };
 }
+
+export async function listOnboardingInvitations() {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .schema("core")
+    .from("user_invitations")
+    .select(`
+      id,
+      token,
+      expires_at,
+      accepted_at,
+      status,
+      invitation_type,
+      created_at,
+      tenant_id,
+      user:user_id (
+        id,
+        full_name,
+        email,
+        status
+      )
+    `)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  // Fetch institutions to map tenant_id to name
+  const { data: insts } = await supabase
+    .schema("institution")
+    .from("institutions")
+    .select("id, name");
+  
+  const instMap = new Map(insts?.map((i) => [i.id, i.name]));
+
+  return (data || []).map((inv: any) => ({
+    ...inv,
+    institution_name: instMap.get(inv.tenant_id) || "Unknown Institution",
+  }));
+}
+
+export async function regenerateInvitation(invitationId: string, invitedByUserId: string) {
+  const supabase = await createClient();
+
+  // 1. Fetch current invitation to check it exists and get email/tenant_id
+  const { data: invitation, error: fetchError } = await supabase
+    .schema("core")
+    .from("user_invitations")
+    .select(`
+      id,
+      tenant_id,
+      invitation_type,
+      user:user_id (
+        id,
+        full_name,
+        email
+      )
+    `)
+    .eq("id", invitationId)
+    .maybeSingle();
+
+  if (fetchError || !invitation) {
+    throw new Error(fetchError?.message || "Invitation not found.");
+  }
+
+  const user = invitation.user as any;
+  if (!user) {
+    throw new Error("Associated user not found for this invitation.");
+  }
+
+  // 2. Generate new token, expires_at (7 days) and reset status to 'created'
+  const newToken = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: updated, error: updateError } = await supabase
+    .schema("core")
+    .from("user_invitations")
+    .update({
+      token: newToken,
+      expires_at: expiresAt,
+      status: "created",
+      invited_by: invitedByUserId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", invitationId)
+    .select("*")
+    .single();
+
+  if (updateError) {
+    throw updateError;
+  }
+
+  // Also update user status in core.users back to 'invited'
+  await supabase
+    .schema("core")
+    .from("users")
+    .update({ status: "invited" })
+    .eq("id", user.id);
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const link = `${appUrl}/onboarding/verify?token=${newToken}&email=${encodeURIComponent(user.email)}`;
+
+  // Resolve roles and name
+  const roleNameMap: Record<string, string> = {
+    student_onboarding: "Student",
+    trainer_onboarding: "Teacher / Trainer",
+    institution_admin_invite: "Institution Admin",
+    mentor_invite: "Mentor",
+  };
+  const roleLabel = roleNameMap[invitation.invitation_type] || "Member";
+
+  // Fetch institution name
+  const { data: inst } = await supabase
+    .schema("institution")
+    .from("institutions")
+    .select("name")
+    .eq("id", invitation.tenant_id)
+    .maybeSingle();
+  const institutionName = inst?.name || "Hynox Campus";
+
+  let mailStatus = "sent";
+  try {
+    await sendOnboardingEmail(user.email, link, user.full_name || "Member", roleLabel, institutionName);
+  } catch (mailErr: any) {
+    console.error("Regenerate email dispatch failed:", mailErr);
+    mailStatus = "failed";
+  }
+
+  // Update status in database
+  const { data: finalUpdated } = await supabase
+    .schema("core")
+    .from("user_invitations")
+    .update({ status: mailStatus })
+    .eq("id", invitationId)
+    .select("*")
+    .single();
+
+  return {
+    ...(finalUpdated || updated),
+    link,
+    email: user.email,
+  };
+}
+

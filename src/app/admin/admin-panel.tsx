@@ -4,7 +4,9 @@ import React, { useState } from "react";
 import { 
   createNewInstitutionAction, 
   assignAdminAction, 
-  uploadCsvOnboardingAction 
+  uploadCsvOnboardingAction,
+  regenerateInvitationAction,
+  listInstitutionUsersAction
 } from "@/app/actions/institution-actions";
 import { signOutAction } from "@/app/actions/auth-actions";
 import { 
@@ -18,17 +20,193 @@ import {
   Link as LinkIcon, 
   Globe, 
   Code,
-  Copy
+  Copy,
+  Search,
+  RefreshCw,
+  Clock,
+  ShieldCheck,
+  CheckCircle,
+  XCircle,
+  HelpCircle,
+  Ban
 } from "lucide-react";
 
 interface AdminPanelProps {
   adminEmail: string;
   initialInstitutions: any[];
+  initialInvitations?: any[];
 }
 
-export default function AdminPanel({ adminEmail, initialInstitutions }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv">("institutions");
+export default function AdminPanel({ adminEmail, initialInstitutions, initialInvitations = [] }: AdminPanelProps) {
+  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
+  const [invitations, setInvitations] = useState<any[]>(initialInvitations);
+  const [inviteSearch, setInviteSearch] = useState("");
+  const [inviteFilter, setInviteFilter] = useState<"all" | "pending" | "accepted" | "expired" | "failed" | "revoked">("all");
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+
+  // Institution Explorer states
+  const [explorerSelectedId, setExplorerSelectedId] = useState("");
+  const [explorerUsers, setExplorerUsers] = useState<any[]>([]);
+  const [explorerLoading, setExplorerLoading] = useState(false);
+  const [explorerSearch, setExplorerSearch] = useState("");
+  const [explorerRoleFilter, setExplorerRoleFilter] = useState<"all" | "admin" | "teacher" | "student">("all");
+
+  const handleSelectInstitutionForExplorer = async (instId: string) => {
+    setExplorerSelectedId(instId);
+    if (!instId) {
+      setExplorerUsers([]);
+      return;
+    }
+    setExplorerLoading(true);
+    setError("");
+    const res = await listInstitutionUsersAction(instId);
+    if (res.error) {
+      setError(res.error);
+      setExplorerUsers([]);
+    } else if (res.users) {
+      setExplorerUsers(res.users);
+    }
+    setExplorerLoading(false);
+  };
+
+  const handleRegenerateInvite = async (invitationId: string) => {
+    setRegeneratingId(invitationId);
+    setError("");
+    setSuccess("");
+    
+    const res = await regenerateInvitationAction(invitationId);
+    if (res.error) {
+      setError(res.error);
+    } else if (res.invitation) {
+      setSuccess(`Successfully regenerated invitation token!`);
+      // Update local state list
+      setInvitations((prev) =>
+        prev.map((inv) => {
+          if (inv.id === invitationId) {
+            return {
+              ...inv,
+              token: res.invitation.token,
+              expires_at: res.invitation.expires_at,
+              status: res.invitation.status,
+              accepted_at: null,
+              user: inv.user ? { ...inv.user, status: "invited" } : undefined
+            };
+          }
+          return inv;
+        })
+      );
+    }
+    setRegeneratingId(null);
+  };
+
+  const computedStats = React.useMemo(() => {
+    let total = invitations.length;
+    let accepted = 0;
+    let pending = 0;
+    let expired = 0;
+    let failed = 0;
+    let revoked = 0;
+
+    const now = new Date();
+
+    invitations.forEach((inv) => {
+      const isExpired = inv.status === "expired" || (["pending", "created", "sent"].includes(inv.status) && new Date(inv.expires_at) < now);
+      if (inv.status === "accepted") {
+        accepted++;
+      } else if (isExpired) {
+        expired++;
+      } else if (inv.status === "failed") {
+        failed++;
+      } else if (inv.status === "revoked") {
+        revoked++;
+      } else {
+        pending++;
+      }
+    });
+
+    return { total, accepted, pending, expired, failed, revoked };
+  }, [invitations]);
+
+  const filteredInvitations = React.useMemo(() => {
+    return invitations.filter((inv) => {
+      // 1. Search filter
+      const searchLower = inviteSearch.toLowerCase();
+      const nameMatch = inv.user?.full_name?.toLowerCase().includes(searchLower);
+      const emailMatch = inv.user?.email?.toLowerCase().includes(searchLower);
+      const searchMatch = !inviteSearch || nameMatch || emailMatch;
+
+      if (!searchMatch) return false;
+
+      // 2. Status filter
+      if (inviteFilter === "all") return true;
+
+      const now = new Date();
+      const isExpired = inv.status === "expired" || (["pending", "created", "sent"].includes(inv.status) && new Date(inv.expires_at) < now);
+
+      if (inviteFilter === "accepted") {
+        return inv.status === "accepted";
+      }
+      if (inviteFilter === "expired") {
+        return isExpired;
+      }
+      if (inviteFilter === "failed") {
+        return inv.status === "failed";
+      }
+      if (inviteFilter === "revoked") {
+        return inv.status === "revoked";
+      }
+      if (inviteFilter === "pending") {
+        return ["pending", "created", "sent"].includes(inv.status) && !isExpired;
+      }
+
+      return true;
+    });
+  }, [invitations, inviteSearch, inviteFilter]);
+
+  const computedExplorerStats = React.useMemo(() => {
+    let admins = 0;
+    let teachers = 0;
+    let students = 0;
+
+    explorerUsers.forEach((u) => {
+      const isTeacher = u.roles.includes("teacher") || u.roles.includes("trainer");
+      const isAdmin = u.roles.includes("institution_admin") || u.roles.includes("super_admin");
+      const isStudent = u.roles.includes("student");
+
+      if (isAdmin) admins++;
+      if (isTeacher) teachers++;
+      if (isStudent) students++;
+    });
+
+    return { total: explorerUsers.length, admins, teachers, students };
+  }, [explorerUsers]);
+
+  const filteredExplorerUsers = React.useMemo(() => {
+    return explorerUsers.filter((u) => {
+      const searchLower = explorerSearch.toLowerCase();
+      const nameMatch = u.full_name?.toLowerCase().includes(searchLower);
+      const emailMatch = u.email?.toLowerCase().includes(searchLower);
+      const searchMatch = !explorerSearch || nameMatch || emailMatch;
+
+      if (!searchMatch) return false;
+
+      if (explorerRoleFilter === "all") return true;
+      if (explorerRoleFilter === "admin") {
+        return u.roles.includes("institution_admin") || u.roles.includes("super_admin");
+      }
+      if (explorerRoleFilter === "teacher") {
+        return u.roles.includes("teacher") || u.roles.includes("trainer");
+      }
+      if (explorerRoleFilter === "student") {
+        return u.roles.includes("student");
+      }
+
+      return true;
+    });
+  }, [explorerUsers, explorerSearch, explorerRoleFilter]);
+
+
   
   // Status states
   const [loading, setLoading] = useState(false);
@@ -222,6 +400,36 @@ export default function AdminPanel({ adminEmail, initialInstitutions }: AdminPan
           >
             <FileSpreadsheet size={16} />
             CSV Onboarding
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("onboarding");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "onboarding"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <ShieldCheck size={16} />
+            Onboarding Status
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("explorer");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "explorer"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <Globe size={16} />
+            Institution Space
           </button>
         </div>
 
@@ -563,6 +771,410 @@ export default function AdminPanel({ adminEmail, initialInstitutions }: AdminPan
                     ))}
                   </div>
                 </div>
+              )}
+
+            </div>
+          )}
+
+          {/* TAB 4: ONBOARDING STATUS DASHBOARD */}
+          {activeTab === "onboarding" && (
+            <div className="space-y-6">
+              
+              {/* Statistics Grid */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                  <div className="text-[10px] font-bold text-[#475569] uppercase tracking-wider">Total Invited</div>
+                  <div className="text-xl font-bold mt-1 text-[#0F172A]">{computedStats.total}</div>
+                </div>
+                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                  <div className="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">Accepted (Approved)</div>
+                  <div className="text-xl font-bold mt-1 text-[#16A34A]">{computedStats.accepted}</div>
+                </div>
+                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                  <div className="text-[10px] font-bold text-[#2563EB] uppercase tracking-wider">Pending (Awaiting)</div>
+                  <div className="text-xl font-bold mt-1 text-[#2563EB]">{computedStats.pending}</div>
+                </div>
+                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                  <div className="text-[10px] font-bold text-[#F59E0B] uppercase tracking-wider">Expired</div>
+                  <div className="text-xl font-bold mt-1 text-[#F59E0B]">{computedStats.expired}</div>
+                </div>
+                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm col-span-2 lg:col-span-1">
+                  <div className="text-[10px] font-bold text-[#DC2626] uppercase tracking-wider">Failed / Revoked</div>
+                  <div className="text-xl font-bold mt-1 text-[#DC2626]">{computedStats.failed + computedStats.revoked}</div>
+                </div>
+              </div>
+
+              {/* Main List and Filters Card */}
+              <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-[#E2E8F0] flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/50">
+                  {/* Filter Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto">
+                    {(["all", "pending", "accepted", "expired", "failed", "revoked"] as const).map((filter) => {
+                      const labelMap = {
+                        all: "All",
+                        pending: "Pending / Sent",
+                        accepted: "Accepted",
+                        expired: "Expired",
+                        failed: "Failed",
+                        revoked: "Revoked",
+                      };
+                      const isActive = inviteFilter === filter;
+                      return (
+                        <button
+                          key={filter}
+                          onClick={() => setInviteFilter(filter)}
+                          className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
+                            isActive
+                              ? "bg-[#2563EB] text-white border-[#2563EB] shadow-sm"
+                              : "bg-white text-[#475569] border-[#E2E8F0] hover:bg-slate-50"
+                          }`}
+                        >
+                          {labelMap[filter]}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Search input */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-2.5 text-[#475569]" size={14} />
+                    <input
+                      type="text"
+                      placeholder="Search by name or email..."
+                      value={inviteSearch}
+                      onChange={(e) => setInviteSearch(e.target.value)}
+                      className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-xs text-[#0F172A]"
+                    />
+                  </div>
+                </div>
+
+                {/* Table Content */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50/30 border-b border-[#E2E8F0] font-bold text-[#475569]">
+                        <th className="px-6 py-3">Invitee Details</th>
+                        <th className="px-6 py-3">Target Campus / Role</th>
+                        <th className="px-6 py-3">Created / Expires At</th>
+                        <th className="px-6 py-3">Status</th>
+                        <th className="px-6 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {filteredInvitations.length > 0 ? (
+                        filteredInvitations.map((inv) => {
+                          const now = new Date();
+                          const isExpired = inv.status === "expired" || (["pending", "created", "sent"].includes(inv.status) && new Date(inv.expires_at) < now);
+                          const appUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+                          const fullInviteLink = `${appUrl}/onboarding/verify?token=${inv.token}&email=${encodeURIComponent(inv.user?.email || "")}`;
+
+                          // Human readable role mapping
+                          const roleNameMap: Record<string, string> = {
+                            student_onboarding: "Student",
+                            trainer_onboarding: "Teacher",
+                            institution_admin_invite: "Institution Admin",
+                            mentor_invite: "Mentor",
+                          };
+                          const roleLabel = roleNameMap[inv.invitation_type] || "Member";
+
+                          // Determine badge color
+                          let statusBadge = (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20 flex items-center gap-1 w-fit">
+                              <Clock size={10} /> Pending
+                            </span>
+                          );
+
+                          if (inv.status === "accepted") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20 flex items-center gap-1 w-fit">
+                                <CheckCircle size={10} /> Accepted
+                              </span>
+                            );
+                          } else if (isExpired) {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20 flex items-center gap-1 w-fit">
+                                <XCircle size={10} /> Expired
+                              </span>
+                            );
+                          } else if (inv.status === "failed") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20 flex items-center gap-1 w-fit">
+                                <XCircle size={10} /> Mail Failed
+                              </span>
+                            );
+                          } else if (inv.status === "revoked") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-slate-500/10 text-slate-500 border-slate-500/20 flex items-center gap-1 w-fit">
+                                <Ban size={10} /> Revoked
+                              </span>
+                            );
+                          } else if (inv.status === "created") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#06B6D4]/10 text-[#06B6D4] border-[#06B6D4]/20 flex items-center gap-1 w-fit">
+                                <Clock size={10} /> Mail Pending
+                              </span>
+                            );
+                          } else if (inv.status === "sent") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-500/10 text-emerald-600 border-emerald-500/20 flex items-center gap-1 w-fit">
+                                <CheckCircle size={10} /> Mail Sent
+                              </span>
+                            );
+                          }
+
+                          return (
+                            <tr key={inv.id} className="hover:bg-slate-50/20 transition-colors">
+                              <td className="px-6 py-4">
+                                <div className="font-semibold text-[#0F172A]">{inv.user?.full_name || "N/A"}</div>
+                                <div className="text-[#475569] text-[11px] font-medium">{inv.user?.email}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <div className="font-medium text-[#0F172A]">{inv.institution_name}</div>
+                                <span className="inline-flex px-1.5 py-0.5 rounded bg-slate-100 text-[#475569] font-bold text-[9px] mt-0.5">
+                                  {roleLabel}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-[#475569] leading-normal">
+                                <div className="font-medium text-[11px]">
+                                  Sent: {new Date(inv.created_at).toLocaleDateString()}
+                                </div>
+                                <div className={`text-[10px] ${isExpired ? "text-[#DC2626]" : "text-[#475569]"}`}>
+                                  {isExpired ? "Expired" : `Expires: ${new Date(inv.expires_at).toLocaleDateString()}`}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4">{statusBadge}</td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  {!isExpired && inv.status !== "accepted" && inv.status !== "revoked" && (
+                                    <button
+                                      onClick={() => copyToClipboard(fullInviteLink)}
+                                      className="flex items-center gap-1 border border-[#E2E8F0] bg-white px-2.5 py-1.5 rounded-lg hover:bg-slate-50 transition-all font-semibold text-[10px]"
+                                    >
+                                      <Copy size={11} /> Copy Link
+                                    </button>
+                                  )}
+                                  
+                                  {inv.status !== "accepted" && (
+                                    <button
+                                      disabled={regeneratingId === inv.id}
+                                      onClick={() => handleRegenerateInvite(inv.id)}
+                                      className="flex items-center gap-1.5 bg-[#2563EB] text-white px-2.5 py-1.5 rounded-lg hover:bg-[#2563EB]/95 transition-all font-semibold text-[10px] disabled:opacity-50"
+                                    >
+                                      {regeneratingId === inv.id ? (
+                                        <RefreshCw size={11} className="animate-spin" />
+                                      ) : (
+                                        <RefreshCw size={11} />
+                                      )}
+                                      Regenerate Token
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-6 py-8 text-center text-[#475569] font-medium">
+                            No matching invitations found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* TAB 5: INSTITUTION SPACE EXPLORER */}
+          {activeTab === "explorer" && (
+            <div className="space-y-6">
+              
+              {/* Selector Card */}
+              <div className="bg-white border border-[#E2E8F0] p-6 rounded-xl shadow-sm">
+                <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#475569] flex items-center gap-1.5">
+                  <Globe size={14} /> Select Campus Space
+                </h3>
+                <p className="text-xs text-[#475569] mb-4">
+                  Select a campus institution tenant to explore its registered administrators, teachers, and students.
+                </p>
+                <select
+                  value={explorerSelectedId}
+                  onChange={(e) => handleSelectInstitutionForExplorer(e.target.value)}
+                  className="w-full max-w-md bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                >
+                  <option value="">-- Choose Institution --</option>
+                  {institutions.map((inst) => (
+                    <option key={inst.id} value={inst.id}>
+                      {inst.name} ({inst.institution_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {explorerSelectedId && (
+                <>
+                  {explorerLoading ? (
+                    <div className="bg-white border border-[#E2E8F0] rounded-xl p-12 text-center shadow-sm">
+                      <RefreshCw size={24} className="animate-spin text-[#2563EB] mx-auto mb-2" />
+                      <p className="text-xs text-[#475569] font-medium">Loading campus directory...</p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Stats Grid */}
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                          <div className="text-[10px] font-bold text-[#475569] uppercase tracking-wider">Total Campus Users</div>
+                          <div className="text-xl font-bold mt-1 text-[#0F172A]">{computedExplorerStats.total}</div>
+                        </div>
+                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                          <div className="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">Administrators</div>
+                          <div className="text-xl font-bold mt-1 text-[#16A34A]">{computedExplorerStats.admins}</div>
+                        </div>
+                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                          <div className="text-[10px] font-bold text-[#2563EB] uppercase tracking-wider">Teachers / Trainers</div>
+                          <div className="text-xl font-bold mt-1 text-[#2563EB]">{computedExplorerStats.teachers}</div>
+                        </div>
+                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                          <div className="text-[10px] font-bold text-[#06B6D4] uppercase tracking-wider">Students</div>
+                          <div className="text-xl font-bold mt-1 text-[#06B6D4]">{computedExplorerStats.students}</div>
+                        </div>
+                      </div>
+
+                      {/* User list and filtering */}
+                      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden flex flex-col">
+                        <div className="p-4 border-b border-[#E2E8F0] flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/50">
+                          {/* Filter Pills */}
+                          <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto">
+                            {(["all", "admin", "teacher", "student"] as const).map((filter) => {
+                              const labelMap = {
+                                all: "All Users",
+                                admin: "Administrators",
+                                teacher: "Teachers / Trainers",
+                                student: "Students",
+                              };
+                              const isActive = explorerRoleFilter === filter;
+                              return (
+                                <button
+                                  key={filter}
+                                  onClick={() => setExplorerRoleFilter(filter)}
+                                  className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
+                                    isActive
+                                      ? "bg-[#2563EB] text-white border-[#2563EB] shadow-sm"
+                                      : "bg-white text-[#475569] border-[#E2E8F0] hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {labelMap[filter]}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Search Input */}
+                          <div className="relative w-full sm:w-64">
+                            <Search className="absolute left-3 top-2.5 text-[#475569]" size={14} />
+                            <input
+                              type="text"
+                              placeholder="Search directory..."
+                              value={explorerSearch}
+                              onChange={(e) => setExplorerSearch(e.target.value)}
+                              className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-xs text-[#0F172A]"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Directory Directory Table */}
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="bg-slate-50/30 border-b border-[#E2E8F0] font-bold text-[#475569]">
+                                <th className="px-6 py-3">User Details</th>
+                                <th className="px-6 py-3">Assigned Role</th>
+                                <th className="px-6 py-3">Status</th>
+                                <th className="px-6 py-3">Joined Date</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#E2E8F0]">
+                              {filteredExplorerUsers.length > 0 ? (
+                                filteredExplorerUsers.map((user) => {
+                                  // Determine badge style for role
+                                  let roleBadge = (
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-slate-100 text-[#475569] border-slate-200">
+                                      Member
+                                    </span>
+                                  );
+
+                                  if (user.roles.includes("super_admin") || user.roles.includes("institution_admin")) {
+                                    roleBadge = (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20">
+                                        Admin
+                                      </span>
+                                    );
+                                  } else if (user.roles.includes("teacher") || user.roles.includes("trainer")) {
+                                    roleBadge = (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20">
+                                        Teacher
+                                      </span>
+                                    );
+                                  } else if (user.roles.includes("student")) {
+                                    roleBadge = (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#06B6D4]/10 text-[#06B6D4] border-[#06B6D4]/20">
+                                        Student
+                                      </span>
+                                    );
+                                  }
+
+                                  // Determine badge for user status
+                                  let statusBadge = (
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20">
+                                      {user.status}
+                                    </span>
+                                  );
+
+                                  if (user.status === "invited" || user.status === "pending_activation") {
+                                    statusBadge = (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20">
+                                        {user.status}
+                                      </span>
+                                    );
+                                  } else if (user.status === "suspended" || user.status === "inactive" || user.status === "blocked") {
+                                    statusBadge = (
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20">
+                                        {user.status}
+                                      </span>
+                                    );
+                                  }
+
+                                  return (
+                                    <tr key={user.id} className="hover:bg-slate-50/20 transition-colors">
+                                      <td className="px-6 py-4">
+                                        <div className="font-semibold text-[#0F172A]">{user.full_name || "N/A"}</div>
+                                        <div className="text-[#475569] text-[11px] font-medium">{user.email}</div>
+                                      </td>
+                                      <td className="px-6 py-4">{roleBadge}</td>
+                                      <td className="px-6 py-4">{statusBadge}</td>
+                                      <td className="px-6 py-4 text-[#475569] font-medium">
+                                        {new Date(user.created_at).toLocaleDateString()}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              ) : (
+                                <tr>
+                                  <td colSpan={4} className="px-6 py-8 text-center text-[#475569] font-medium">
+                                    No users found in this role group.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
               )}
 
             </div>
