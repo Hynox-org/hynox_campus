@@ -6,9 +6,12 @@ import {
   assignAdminAction, 
   uploadCsvOnboardingAction,
   regenerateInvitationAction,
-  listInstitutionUsersAction
+  listInstitutionUsersAction,
+  onboardSingleUserAction,
+  listInvitationsAction
 } from "@/app/actions/institution-actions";
 import { signOutAction } from "@/app/actions/auth-actions";
+import * as XLSX from "xlsx";
 import { 
   Building, 
   UserPlus, 
@@ -28,7 +31,9 @@ import {
   CheckCircle,
   XCircle,
   HelpCircle,
-  Ban
+  Ban,
+  Download,
+  Upload
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -228,11 +233,19 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [selectedInstId, setSelectedInstId] = useState(institutions[0]?.id || "");
 
   const [csvContent, setCsvContent] = useState("");
+  
+  // Single-user onboarding form states
+  const [onboardMode, setOnboardMode] = useState<"single" | "csv">("single");
+  const [singleName, setSingleName] = useState("");
+  const [singleEmail, setSingleEmail] = useState("");
+  const [singleRole, setSingleRole] = useState("student");
+  const [uploadedFileName, setUploadedFileName] = useState("");
 
   const clearStatuses = () => {
     setError("");
     setSuccess("");
     setLinks([]);
+    setUploadedFileName("");
   };
 
   const handleCreateInstitution = async (e: React.FormEvent) => {
@@ -319,8 +332,166 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
       const successes = res.results.filter((r: any) => r.status === "success");
       
       setSuccess(`Processed CSV: ${successes.length} provisioned successfully, ${errors.length} errors.`);
+      
+      const freshInvites = await listInvitationsAction();
+      if (freshInvites.invitations) {
+        setInvitations(freshInvites.invitations);
+      }
     }
     setLoading(false);
+  };
+
+  const handleSingleUserOnboard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    clearStatuses();
+
+    if (!selectedInstId) {
+      setError("Please select or create an institution first.");
+      setLoading(false);
+      return;
+    }
+
+    if (!singleName.trim() || !singleEmail.trim()) {
+      setError("Full Name and Email are required.");
+      setLoading(false);
+      return;
+    }
+
+    const res = await onboardSingleUserAction({
+      email: singleEmail,
+      name: singleName,
+      role: singleRole,
+      institutionId: selectedInstId,
+    });
+
+    if (res.error) {
+      setError(res.error);
+    } else if (res.result) {
+      setLinks([res.result]);
+      if (res.result.status === "success") {
+        setSuccess(`Successfully invited '${singleEmail}'!`);
+        setSingleName("");
+        setSingleEmail("");
+        
+        const freshInvites = await listInvitationsAction();
+        if (freshInvites.invitations) {
+          setInvitations(freshInvites.invitations);
+        }
+      } else {
+        setError(res.result.error || "Failed to onboard user.");
+      }
+    }
+    setLoading(false);
+  };
+
+  const downloadTemplateExcel = () => {
+    if (!selectedInstId) {
+      setError("Please select a default institution first.");
+      return;
+    }
+    const inst = institutions.find((i) => i.id === selectedInstId);
+    const slug = inst ? inst.slug : "campus";
+
+    // Build template data
+    const templateData = [
+      {
+        "Full Name": "Jane Doe",
+        "Email": "jane.doe@school.edu",
+        "Role (student, teacher, institution_admin, mentor)": "student",
+        "Institution ID (Do Not Modify)": selectedInstId
+      },
+      {
+        "Full Name": "Professor Plum",
+        "Email": "plum@school.edu",
+        "Role (student, teacher, institution_admin, mentor)": "teacher",
+        "Institution ID (Do Not Modify)": selectedInstId
+      }
+    ];
+
+    try {
+      const worksheet = XLSX.utils.json_to_sheet(templateData);
+      
+      // Auto-fit column widths
+      const colWidths = [
+        { wch: 20 }, // Full Name
+        { wch: 30 }, // Email
+        { wch: 45 }, // Role Instructions
+        { wch: 40 }  // Institution ID
+      ];
+      worksheet["!cols"] = colWidths;
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Onboarding Template");
+      XLSX.writeFile(workbook, `hynox_onboarding_template_${slug}.xlsx`);
+      setSuccess("Excel template generated successfully!");
+    } catch (err: any) {
+      setError(`Failed to generate Excel template: ${err.message}`);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadedFileName(file.name);
+    setError("");
+    setSuccess("");
+
+    const reader = new FileReader();
+
+    if (file.name.endsWith(".csv")) {
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        setCsvContent(text);
+        setSuccess(`Loaded CSV file: ${file.name}`);
+      };
+      reader.readAsText(file);
+    } else if (file.name.endsWith(".xlsx") || file.name.endsWith(".xls")) {
+      reader.onload = (event) => {
+        try {
+          const data = new Uint8Array(event.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: "array" });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          
+          const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { header: 1 });
+          if (jsonData.length === 0) {
+            throw new Error("The uploaded sheet has no rows.");
+          }
+          
+          // Map headers: name, email, role, institution_id
+          const rawHeaders = (jsonData[0] as any[]).map(h => String(h || "").trim());
+          const headers = rawHeaders.map(h => {
+            const lower = h.toLowerCase();
+            if (lower.includes("name")) return "name";
+            if (lower.includes("email")) return "email";
+            if (lower.includes("role")) return "role";
+            if (lower.includes("institution")) return "institution_id";
+            return lower;
+          });
+
+          const csvRows = [headers.join(",")];
+          for (let i = 1; i < jsonData.length; i++) {
+            const row = jsonData[i] as any[];
+            if (!row || row.length === 0 || row.every(c => c === null || c === undefined || String(c).trim() === "")) continue;
+            
+            while (row.length < headers.length) {
+              row.push("");
+            }
+            csvRows.push(row.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(","));
+          }
+          
+          setCsvContent(csvRows.join("\n"));
+          setSuccess(`Successfully parsed and loaded Excel file: ${file.name}`);
+        } catch (err: any) {
+          setError(`Failed to parse Excel file: ${err.message}`);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      setError("Unsupported file format. Please upload a .csv, .xlsx, or .xls file.");
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -666,67 +837,214 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
           )}
 
-          {/* TAB 3: CSV ONBOARDING */}
+          {/* TAB 3: CSV ONBOARDING / SINGLE ONBOARDING */}
           {activeTab === "csv" && (
             <div className="space-y-6">
               <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm">
-                <h3 className="text-xs font-bold uppercase tracking-wider mb-4 text-[#475569] flex items-center gap-1.5">
-                  <FileSpreadsheet size={15} /> Bulk CSV Student/Teacher Onboarding
-                </h3>
-
-                <p className="text-xs text-[#475569] mb-4 leading-relaxed">
-                  Provision accounts in bulk. Paste a CSV containing headers <code className="bg-[#F8FAFC] border border-[#E2E8F0] px-1 py-0.5 rounded font-mono text-[#0F172A]">name, email, role, institution_id</code>.
-                  If <code className="bg-[#F8FAFC] border border-[#E2E8F0] px-1 py-0.5 rounded font-mono text-[#0F172A]">institution_id</code> column is missing or blank, the uploader defaults to the selected tenant below.
-                </p>
-
-                <form onSubmit={handleCsvUpload} className="space-y-4 text-xs">
-                  <div className="max-w-md">
-                    <label className="block font-semibold mb-1 text-[#475569]">Default Institution *</label>
-                    <select
-                      value={selectedInstId}
-                      onChange={(e) => setSelectedInstId(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    >
-                      <option value="">-- Select Default Institution --</option>
-                      {institutions.map((inst) => (
-                        <option key={inst.id} value={inst.id}>
-                          {inst.name} ({inst.institution_code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block font-semibold text-[#475569]">Pasted CSV Contents *</label>
-                      <button
-                        type="button"
-                        onClick={() => setCsvContent(`name,email,role\nJane Doe,jane@school.edu,student\nJohn Smith,john@school.edu,teacher`)}
-                        className="text-[10px] text-[#2563EB] hover:underline font-bold"
-                      >
-                        (Insert Sample Template)
-                      </button>
-                    </div>
-                    <textarea
-                      placeholder="name,email,role,institution_id&#10;Jane Doe,jane.doe@college.edu,student&#10;Professor Plum,plum@college.edu,teacher"
-                      required
-                      value={csvContent}
-                      onChange={(e) => setCsvContent(e.target.value)}
-                      rows={8}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#2563EB] shadow-sm resize-y"
-                    />
-                  </div>
-
-                  <div>
+                
+                {/* Onboarding Mode Selection Toggle */}
+                <div className="flex items-center justify-between pb-4 mb-5 border-b border-[#E2E8F0]">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#475569] flex items-center gap-1.5">
+                    <UserPlus size={15} /> User Onboarding
+                  </h3>
+                  
+                  <div className="flex bg-slate-100 p-0.5 rounded-lg border border-[#E2E8F0]">
                     <button
-                      type="submit"
-                      disabled={loading || !selectedInstId || !csvContent.trim()}
-                      className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
+                      type="button"
+                      onClick={() => {
+                        setOnboardMode("single");
+                        clearStatuses();
+                      }}
+                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all ${
+                        onboardMode === "single"
+                          ? "bg-white text-[#2563EB] shadow-sm border border-[#E2E8F0]/30"
+                          : "text-[#475569] hover:text-[#0F172A]"
+                      }`}
                     >
-                      {loading ? "Processing Onboarding..." : "Process Bulk Onboarding Link"}
+                      Single User
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOnboardMode("csv");
+                        clearStatuses();
+                      }}
+                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all ${
+                        onboardMode === "csv"
+                          ? "bg-white text-[#2563EB] shadow-sm border border-[#E2E8F0]/30"
+                          : "text-[#475569] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Bulk CSV Upload
                     </button>
                   </div>
-                </form>
+                </div>
+
+                {onboardMode === "single" ? (
+                  // Single User Onboarding Form
+                  <form onSubmit={handleSingleUserOnboard} className="space-y-4 text-xs">
+                    <p className="text-xs text-[#475569] mb-2 leading-relaxed">
+                      Onboard a single user instantly. Fill in their details below, select their role, and assign them to a school/college campus.
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Campus / Institution *</label>
+                        <select
+                          value={selectedInstId}
+                          onChange={(e) => setSelectedInstId(e.target.value)}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          required
+                        >
+                          <option value="">-- Choose Institution or School --</option>
+                          {institutions.map((inst) => (
+                            <option key={inst.id} value={inst.id}>
+                              {inst.name} ({inst.institution_code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Assigned Role *</label>
+                        <select
+                          value={singleRole}
+                          onChange={(e) => setSingleRole(e.target.value)}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          required
+                        >
+                          <option value="student">Student</option>
+                          <option value="teacher">Teacher / Trainer</option>
+                          <option value="institution_admin">Institution Administrator</option>
+                          <option value="mentor">Mentor / Advisor</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Full Name *</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. John Doe"
+                          value={singleName}
+                          onChange={(e) => setSingleName(e.target.value)}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Email Address *</label>
+                        <input
+                          type="email"
+                          placeholder="e.g. john.doe@school.edu"
+                          value={singleEmail}
+                          onChange={(e) => setSingleEmail(e.target.value)}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <button
+                        type="submit"
+                        disabled={loading || !selectedInstId || !singleName.trim() || !singleEmail.trim()}
+                        className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
+                      >
+                        {loading ? "Sending Invitation..." : "Onboard Single User"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  // Bulk CSV Onboarding Form
+                  <form onSubmit={handleCsvUpload} className="space-y-4 text-xs">
+                    <p className="text-xs text-[#475569] mb-2 leading-relaxed">
+                      Download our pre-filled Excel template, populate your spreadsheet, and upload it directly. Or simply paste CSV data directly in the textbox below.
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Default Institution *</label>
+                        <select
+                          value={selectedInstId}
+                          onChange={(e) => setSelectedInstId(e.target.value)}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          required
+                        >
+                          <option value="">-- Choose Institution or School --</option>
+                          {institutions.map((inst) => (
+                            <option key={inst.id} value={inst.id}>
+                              {inst.name} ({inst.institution_code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          disabled={!selectedInstId}
+                          onClick={downloadTemplateExcel}
+                          className="flex items-center gap-1.5 bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20 px-3.5 py-2 rounded-lg hover:bg-[#2563EB] hover:text-white transition-all font-semibold disabled:opacity-50 text-[11px]"
+                        >
+                          <Download size={13} />
+                          Download Excel Template
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* File Upload Box */}
+                    <div className="border border-dashed border-[#E2E8F0] bg-slate-50/50 hover:bg-slate-50 rounded-xl p-6 text-center transition-all relative">
+                      <input
+                        type="file"
+                        accept=".csv, .xlsx, .xls"
+                        onChange={handleFileUpload}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        disabled={!selectedInstId}
+                      />
+                      <div className="flex flex-col items-center justify-center gap-2">
+                        <Upload className="text-[#475569]" size={20} />
+                        <span className="font-semibold text-xs text-[#0F172A]">
+                          {uploadedFileName ? `Selected: ${uploadedFileName}` : "Click or Drag & Drop Excel/CSV sheet here"}
+                        </span>
+                        <span className="text-[10px] text-[#475569]">
+                          Supports .xlsx, .xls, and .csv formats
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-semibold text-[#475569]">Spreadsheet Preview (Pasted or Loaded) *</label>
+                        <button
+                          type="button"
+                          onClick={() => setCsvContent(`name,email,role\nJane Doe,jane@school.edu,student\nJohn Smith,john@school.edu,teacher`)}
+                          className="text-[10px] text-[#2563EB] hover:underline font-bold"
+                        >
+                          (Insert Sample Template)
+                        </button>
+                      </div>
+                      <textarea
+                        placeholder="name,email,role,institution_id&#10;Jane Doe,jane.doe@college.edu,student&#10;Professor Plum,plum@college.edu,teacher"
+                        required
+                        value={csvContent}
+                        onChange={(e) => setCsvContent(e.target.value)}
+                        rows={8}
+                        className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#2563EB] shadow-sm resize-y"
+                      />
+                    </div>
+
+                    <div>
+                      <button
+                        type="submit"
+                        disabled={loading || !selectedInstId || !csvContent.trim()}
+                        className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
+                      >
+                        {loading ? "Processing Onboarding..." : "Process Bulk Onboarding Link"}
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
 
               {/* Onboarding Links Generation Display */}

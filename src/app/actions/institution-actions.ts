@@ -9,7 +9,8 @@ import {
 import { 
   processCsvOnboarding,
   listOnboardingInvitations,
-  regenerateInvitation 
+  regenerateInvitation,
+  onboardSingleUser
 } from "@/services/onboarding";
 import { revalidatePath } from "next/cache";
 
@@ -140,5 +141,38 @@ export async function listInstitutionUsersAction(institutionId: string) {
     return { error: error.message || "Failed to list institution users." };
   }
 }
+
+export async function onboardSingleUserAction(params: {
+  email: string;
+  name: string;
+  role: string;
+  institutionId: string;
+}) {
+  const { email, name, role, institutionId } = params;
+  if (!email || !name || !role || !institutionId) {
+    return { error: "All fields (email, name, role, institution) are required." };
+  }
+
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    const result = await onboardSingleUser({
+      email,
+      name,
+      role,
+      institutionId,
+      invitedByUserId: userDetails.user.id,
+    });
+
+    revalidatePath("/admin");
+    return { success: true, result };
+  } catch (error: any) {
+    return { error: error.message || "Failed to onboard user." };
+  }
+}
+
 
 

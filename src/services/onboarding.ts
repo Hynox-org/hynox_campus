@@ -14,8 +14,16 @@ export function parseCsv(csvContent: string) {
 
   if (lines.length === 0) return result;
 
+  const cleanVal = (val: string) => {
+    let trimmed = val.trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+      trimmed = trimmed.substring(1, trimmed.length - 1);
+    }
+    return trimmed;
+  };
+
   // Read headers to map columns
-  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const headers = lines[0].split(",").map((h) => cleanVal(h).toLowerCase());
   const nameIdx = headers.indexOf("name");
   const emailIdx = headers.indexOf("email");
   const roleIdx = headers.indexOf("role");
@@ -29,7 +37,7 @@ export function parseCsv(csvContent: string) {
     const line = lines[i].trim();
     if (!line) continue;
 
-    const columns = line.split(",").map((c) => c.trim());
+    const columns = line.split(",").map((c) => cleanVal(c));
     if (columns.length < 3) continue;
 
     result.push({
@@ -424,4 +432,157 @@ export async function regenerateInvitation(invitationId: string, invitedByUserId
     email: user.email,
   };
 }
+
+export async function onboardSingleUser(params: {
+  email: string;
+  name: string;
+  role: string;
+  institutionId: string;
+  invitedByUserId: string;
+}): Promise<OnboardingResult> {
+  const supabase = await createClient();
+  const { email, name, role, institutionId, invitedByUserId } = params;
+
+  try {
+    if (!email || !name || !role || !institutionId) {
+      throw new Error("Missing required fields (name, email, role, or institutionId)");
+    }
+
+    // Fetch all roles to map names to IDs
+    const { data: rolesList } = await supabase
+      .schema("core")
+      .from("roles")
+      .select("id, name");
+
+    const rolesMap = new Map(rolesList?.map((r) => [r.name.toLowerCase(), r.id]));
+    const roleName = role.toLowerCase();
+    const roleId = rolesMap.get(roleName);
+    if (!roleId) {
+      throw new Error(
+        `Invalid role: '${role}'. Allowed: super_admin, institution_admin, teacher, trainer, mentor, student, public.`
+      );
+    }
+
+    // Fetch institution name
+    const { data: inst } = await supabase
+      .schema("institution")
+      .from("institutions")
+      .select("name")
+      .eq("id", institutionId)
+      .maybeSingle();
+
+    // Check if user already exists
+    const { data: existingUser } = await supabase
+      .schema("core")
+      .from("users")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+
+    let userId = existingUser?.id;
+
+    if (!userId) {
+      // Create pre-provisioned user in core.users
+      const { data: newUser, error: userError } = await supabase
+        .schema("core")
+        .from("users")
+        .insert({
+          full_name: name,
+          email: email,
+          tenant_id: institutionId,
+          status: "invited",
+          onboarding_source: "excel_import",
+        })
+        .select("id")
+        .single();
+
+      if (userError) throw userError;
+      userId = newUser.id;
+
+      // Assign core.user_roles role map
+      const { error: roleLinkError } = await supabase
+        .schema("core")
+        .from("user_roles")
+        .insert({
+          user_id: userId,
+          role_id: roleId,
+        });
+
+      if (roleLinkError) throw roleLinkError;
+    } else {
+      // If user already exists in core.users, update their tenant_id
+      await supabase
+        .schema("core")
+        .from("users")
+        .update({ tenant_id: institutionId })
+        .eq("id", userId);
+    }
+
+    // Determine invitation type
+    let invitationType = "student_onboarding";
+    if (roleName === "institution_admin") {
+      invitationType = "institution_admin_invite";
+    } else if (roleName === "teacher" || roleName === "trainer") {
+      invitationType = "trainer_onboarding";
+    } else if (roleName === "mentor") {
+      invitationType = "mentor_invite";
+    }
+
+    // Create onboarding invitation token record
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days expiry
+    const token = crypto.randomUUID();
+
+    const { error: inviteError } = await supabase
+      .schema("core")
+      .from("user_invitations")
+      .insert({
+        user_id: userId,
+        tenant_id: institutionId,
+        token: token,
+        invited_by: invitedByUserId,
+        expires_at: expiresAt,
+        status: "created",
+        invitation_type: invitationType,
+      });
+
+    if (inviteError) throw inviteError;
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const link = `${appUrl}/onboarding/verify?token=${token}&email=${encodeURIComponent(email)}`;
+
+    // Send automated email notification
+    const roleNameMap: Record<string, string> = {
+      student_onboarding: "Student",
+      trainer_onboarding: "Teacher / Trainer",
+      institution_admin_invite: "Institution Admin",
+      mentor_invite: "Mentor",
+    };
+    const roleLabel = roleNameMap[invitationType] || "Member";
+    const institutionName = inst?.name || "Hynox Campus";
+
+    let mailStatus = "sent";
+    try {
+      await sendOnboardingEmail(email, link, name, roleLabel, institutionName);
+    } catch (mailErr: any) {
+      console.error("Onboarding email dispatch failed:", mailErr);
+      mailStatus = "failed";
+    }
+
+    // Update dispatch status in database
+    await supabase
+      .schema("core")
+      .from("user_invitations")
+      .update({ status: mailStatus })
+      .eq("token", token);
+
+    return { email, status: "success", link };
+  } catch (err: any) {
+    return {
+      email: email || "unknown",
+      status: "error",
+      error: err.message,
+    };
+  }
+}
+
 
