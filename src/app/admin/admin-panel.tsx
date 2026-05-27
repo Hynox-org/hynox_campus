@@ -10,6 +10,31 @@ import {
   onboardSingleUserAction,
   listInvitationsAction
 } from "@/app/actions/institution-actions";
+import { 
+  createProgramAction,
+  updateProgramAction,
+  deleteProgramAction,
+  createCourseAction,
+  updateCourseAction,
+  deleteCourseAction,
+  assignCourseInstructorsAction,
+  createModuleAction,
+  updateModuleAction,
+  deleteModuleAction,
+  createLessonAction,
+  updateLessonAction,
+  deleteLessonAction,
+  createLessonResourceAction,
+  deleteLessonResourceAction,
+  listLessonsAction,
+  listLessonResourcesAction,
+  listProgramsAction,
+  listCoursesAction,
+  listModulesAction,
+  getCourseInstructorsAction,
+  listTenantInstructorsAction,
+  getAcademicLookupsAction
+} from "@/app/actions/academic-actions";
 import { signOutAction } from "@/app/actions/auth-actions";
 import * as XLSX from "xlsx";
 import { 
@@ -33,7 +58,21 @@ import {
   HelpCircle,
   Ban,
   Download,
-  Upload
+  Upload,
+  GraduationCap,
+  Folder,
+  ArrowRight,
+  Edit,
+  Trash2,
+  ExternalLink,
+  File,
+  Link2,
+  Video,
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  Save,
+  Users
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -43,7 +82,7 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ adminEmail, initialInstitutions, initialInvitations = [] }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer">("institutions");
+  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
   const [inviteSearch, setInviteSearch] = useState("");
@@ -240,6 +279,416 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [singleEmail, setSingleEmail] = useState("");
   const [singleRole, setSingleRole] = useState("student");
   const [uploadedFileName, setUploadedFileName] = useState("");
+
+  // Academic Builder states
+  const [acadSelectedInstId, setAcadSelectedInstId] = useState("");
+  const [acadPrograms, setAcadPrograms] = useState<any[]>([]);
+  const [acadSelectedProgram, setAcadSelectedProgram] = useState<any | null>(null);
+  const [acadCourses, setAcadCourses] = useState<any[]>([]);
+  const [acadSelectedCourse, setAcadSelectedCourse] = useState<any | null>(null);
+  const [acadModules, setAcadModules] = useState<any[]>([]);
+  const [acadInstructors, setAcadInstructors] = useState<any[]>([]);
+  const [acadTenantTeachers, setAcadTenantTeachers] = useState<any[]>([]);
+  
+  // Lookup states
+  const [acadLookups, setAcadLookups] = useState<any>({
+    courseTypes: [],
+    lessonTypes: [],
+    statuses: [],
+    visibilityTypes: []
+  });
+
+  // Modal / Form Open States
+  const [programModalOpen, setProgramModalOpen] = useState(false);
+  const [editingProgram, setEditingProgram] = useState<any | null>(null);
+  const [programForm, setProgramForm] = useState({ title: "", slug: "", description: "", status_id: "", visibility_type_id: "" });
+
+  const [courseModalOpen, setCourseModalOpen] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<any | null>(null);
+  const [courseForm, setCourseForm] = useState({
+    title: "",
+    slug: "",
+    description: "",
+    course_type_id: "",
+    status_id: "",
+    visibility_type_id: "",
+    enrollment_mode: "open" as any,
+    duration_minutes: 0,
+    thumbnail_path: ""
+  });
+
+  const [moduleModalOpen, setModuleModalOpen] = useState(false);
+  const [editingModule, setEditingModule] = useState<any | null>(null);
+  const [moduleForm, setModuleForm] = useState({ title: "", description: "", position: 1, status_id: "" });
+
+  const [lessonModalOpen, setLessonModalOpen] = useState(false);
+  const [editingLesson, setEditingLesson] = useState<any | null>(null);
+  const [lessonSelectedModuleId, setLessonSelectedModuleId] = useState("");
+  const [lessonForm, setLessonForm] = useState({
+    title: "",
+    lesson_type_id: "",
+    content_json_str: "{}",
+    video_url: "",
+    duration: 0,
+    position: 1,
+    is_preview: false,
+    status_id: ""
+  });
+
+  const [resourceModalOpen, setResourceModalOpen] = useState(false);
+  const [resourceSelectedLessonId, setResourceSelectedLessonId] = useState("");
+  const [resourceForm, setResourceForm] = useState({
+    title: "",
+    resource_type: "link",
+    file_url: "",
+    external_url: "",
+    position: 1
+  });
+
+  React.useEffect(() => {
+    async function loadLookups() {
+      const res = await getAcademicLookupsAction();
+      if (res.success && res.lookups) {
+        setAcadLookups(res.lookups);
+        
+        const activeStatus = res.lookups.statuses.find((s: any) => s.code === "active")?.id || "";
+        const publicVisibility = res.lookups.visibilityTypes.find((v: any) => v.code === "public")?.id || "";
+        
+        setProgramForm(f => ({ ...f, status_id: activeStatus, visibility_type_id: publicVisibility }));
+        setCourseForm(f => ({ ...f, status_id: activeStatus, visibility_type_id: publicVisibility }));
+        setModuleForm(f => ({ ...f, status_id: activeStatus }));
+        setLessonForm(f => ({ ...f, status_id: activeStatus }));
+      }
+    }
+    loadLookups();
+  }, []);
+
+  React.useEffect(() => {
+    if (!acadSelectedInstId) {
+      setAcadPrograms([]);
+      setAcadSelectedProgram(null);
+      setAcadCourses([]);
+      setAcadSelectedCourse(null);
+      setAcadModules([]);
+      setAcadTenantTeachers([]);
+      return;
+    }
+
+    async function loadProgramsAndTeachers() {
+      setLoading(true);
+      setError("");
+      
+      const pRes = await listProgramsAction(acadSelectedInstId);
+      if (pRes.error) {
+        setError(pRes.error);
+      } else if (pRes.programs) {
+        setAcadPrograms(pRes.programs);
+      }
+
+      const tRes = await listTenantInstructorsAction(acadSelectedInstId);
+      if (tRes.error) {
+        setError(tRes.error);
+      } else if (tRes.instructors) {
+        setAcadTenantTeachers(tRes.instructors);
+      }
+      
+      setLoading(false);
+    }
+    loadProgramsAndTeachers();
+  }, [acadSelectedInstId]);
+
+  React.useEffect(() => {
+    if (!acadSelectedProgram) {
+      setAcadCourses([]);
+      setAcadSelectedCourse(null);
+      setAcadModules([]);
+      return;
+    }
+
+    async function loadCourses() {
+      setLoading(true);
+      setError("");
+      const res = await listCoursesAction(acadSelectedProgram.id);
+      if (res.error) {
+        setError(res.error);
+      } else if (res.courses) {
+        setAcadCourses(res.courses);
+      }
+      setLoading(false);
+    }
+    loadCourses();
+  }, [acadSelectedProgram]);
+
+  React.useEffect(() => {
+    if (!acadSelectedCourse) {
+      setAcadModules([]);
+      setAcadInstructors([]);
+      return;
+    }
+
+    async function loadCourseDetails() {
+      setLoading(true);
+      setError("");
+      
+      const mRes = await listModulesAction(acadSelectedCourse.id);
+      if (mRes.error) {
+        setError(mRes.error);
+      } else if (mRes.modules) {
+        const modulesWithLessons = await Promise.all(
+          mRes.modules.map(async (m: any) => {
+            const lRes = await listLessonsAction(m.id);
+            const lessons = lRes.lessons || [];
+            const lessonsWithResources = await Promise.all(
+              lessons.map(async (l: any) => {
+                const rRes = await listLessonResourcesAction(l.id);
+                return { ...l, resources: rRes.resources || [] };
+              })
+            );
+            return { ...m, lessons: lessonsWithResources };
+          })
+        );
+        setAcadModules(modulesWithLessons);
+      }
+
+      const iRes = await getCourseInstructorsAction(acadSelectedCourse.id);
+      if (iRes.error) {
+        setError(iRes.error);
+      } else if (iRes.instructors) {
+        setAcadInstructors(iRes.instructors);
+      }
+
+      setLoading(false);
+    }
+    loadCourseDetails();
+  }, [acadSelectedCourse]);
+
+  const refreshCourseDetails = async (courseId: string) => {
+    const mRes = await listModulesAction(courseId);
+    if (mRes.modules) {
+      const modulesWithLessons = await Promise.all(
+        mRes.modules.map(async (m: any) => {
+          const lRes = await listLessonsAction(m.id);
+          const lessons = lRes.lessons || [];
+          const lessonsWithResources = await Promise.all(
+            lessons.map(async (l: any) => {
+              const rRes = await listLessonResourcesAction(l.id);
+              return { ...l, resources: rRes.resources || [] };
+            })
+          );
+          return { ...m, lessons: lessonsWithResources };
+        })
+      );
+      setAcadModules(modulesWithLessons);
+    }
+  };
+
+  const refreshPrograms = async () => {
+    if (!acadSelectedInstId) return;
+    const res = await listProgramsAction(acadSelectedInstId);
+    if (res.programs) {
+      setAcadPrograms(res.programs);
+      if (acadSelectedProgram) {
+        const updated = res.programs.find((p: any) => p.id === acadSelectedProgram.id);
+        if (updated) setAcadSelectedProgram(updated);
+      }
+    }
+  };
+
+  const refreshCourses = async () => {
+    if (!acadSelectedProgram) return;
+    const res = await listCoursesAction(acadSelectedProgram.id);
+    if (res.courses) {
+      setAcadCourses(res.courses);
+      if (acadSelectedCourse) {
+        const updated = res.courses.find((c: any) => c.id === acadSelectedCourse.id);
+        if (updated) setAcadSelectedCourse(updated);
+      }
+    }
+  };
+
+  const handleProgramSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    let res;
+    if (editingProgram) {
+      res = await updateProgramAction(editingProgram.id, programForm);
+    } else {
+      res = await createProgramAction({
+        ...programForm,
+        tenant_id: acadSelectedInstId,
+        institution_id: acadSelectedInstId
+      });
+    }
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess(`Program saved successfully!`);
+      setProgramModalOpen(false);
+      setEditingProgram(null);
+      await refreshPrograms();
+    }
+    setLoading(false);
+  };
+
+  const handleCourseSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    let res;
+    if (editingCourse) {
+      res = await updateCourseAction(editingCourse.id, courseForm);
+    } else {
+      res = await createCourseAction({
+        ...courseForm,
+        program_id: acadSelectedProgram.id,
+        tenant_id: acadSelectedInstId,
+        institution_id: acadSelectedInstId
+      });
+    }
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess(`Course saved successfully!`);
+      setCourseModalOpen(false);
+      setEditingCourse(null);
+      await refreshCourses();
+    }
+    setLoading(false);
+  };
+
+  const handleModuleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    let res;
+    if (editingModule) {
+      res = await updateModuleAction(editingModule.id, moduleForm);
+    } else {
+      res = await createModuleAction({
+        ...moduleForm,
+        course_id: acadSelectedCourse.id,
+        tenant_id: acadSelectedInstId,
+        institution_id: acadSelectedInstId
+      });
+    }
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess(`Module saved successfully!`);
+      setModuleModalOpen(false);
+      setEditingModule(null);
+      await refreshCourseDetails(acadSelectedCourse.id);
+    }
+    setLoading(false);
+  };
+
+  const handleLessonSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    let content_json = {};
+    try {
+      content_json = JSON.parse(lessonForm.content_json_str);
+    } catch (err) {
+      setError("Content JSON must be valid JSON.");
+      setLoading(false);
+      return;
+    }
+
+    let res;
+    if (editingLesson) {
+      res = await updateLessonAction(editingLesson.id, {
+        title: lessonForm.title,
+        lesson_type_id: lessonForm.lesson_type_id,
+        content_json,
+        video_url: lessonForm.video_url || undefined,
+        duration: lessonForm.duration,
+        position: lessonForm.position,
+        is_preview: lessonForm.is_preview,
+        status_id: lessonForm.status_id
+      });
+    } else {
+      res = await createLessonAction({
+        module_id: lessonSelectedModuleId,
+        title: lessonForm.title,
+        lesson_type_id: lessonForm.lesson_type_id,
+        content_json,
+        video_url: lessonForm.video_url || undefined,
+        duration: lessonForm.duration,
+        position: lessonForm.position,
+        is_preview: lessonForm.is_preview,
+        status_id: lessonForm.status_id,
+        tenant_id: acadSelectedInstId,
+        institution_id: acadSelectedInstId
+      });
+    }
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess(`Lesson saved successfully!`);
+      setLessonModalOpen(false);
+      setEditingLesson(null);
+      await refreshCourseDetails(acadSelectedCourse.id);
+    }
+    setLoading(false);
+  };
+
+  const handleResourceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    const res = await createLessonResourceAction({
+      lesson_id: resourceSelectedLessonId,
+      title: resourceForm.title,
+      resource_type: resourceForm.resource_type,
+      file_url: resourceForm.file_url || undefined,
+      external_url: resourceForm.external_url || undefined,
+      position: resourceForm.position,
+      tenant_id: acadSelectedInstId,
+      institution_id: acadSelectedInstId
+    });
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess(`Resource added successfully!`);
+      setResourceModalOpen(false);
+      await refreshCourseDetails(acadSelectedCourse.id);
+    }
+    setLoading(false);
+  };
+
+  const handleSaveInstructors = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    const instructorIds = acadInstructors.map(i => i.user_id);
+    const res = await assignCourseInstructorsAction(acadSelectedCourse.id, instructorIds);
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess(`Instructors assigned successfully!`);
+    }
+    setLoading(false);
+  };
 
   const clearStatuses = () => {
     setError("");
@@ -601,6 +1050,21 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
           >
             <Globe size={16} />
             Institution Space
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("academics");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "academics"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <GraduationCap size={16} />
+            Academic Builder
           </button>
         </div>
 
@@ -1493,6 +1957,1006 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                     </>
                   )}
                 </>
+              )}
+
+            </div>
+          )}
+
+          {/* TAB 6: ACADEMIC BUILDER */}
+          {activeTab === "academics" && (
+            <div className="space-y-6 animate-fade-in">
+              
+              {/* Institution Selection */}
+              <div className="bg-white border border-[#E2E8F0] p-6 rounded-xl shadow-sm">
+                <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#475569] flex items-center gap-1.5">
+                  <GraduationCap size={15} /> Academic Institution Scope
+                </h3>
+                <p className="text-xs text-[#475569] mb-4">
+                  Select a campus institution to manage its academic catalog, course curriculum, and teacher mapping.
+                </p>
+                <select
+                  value={acadSelectedInstId}
+                  onChange={(e) => {
+                    setAcadSelectedInstId(e.target.value);
+                  }}
+                  className="w-full max-w-md bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                >
+                  <option value="">-- Select Institution Campus --</option>
+                  {institutions.map((inst) => (
+                    <option key={inst.id} value={inst.id}>
+                      {inst.name} ({inst.institution_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {acadSelectedInstId && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  
+                  {/* Left Column: Programs & Courses */}
+                  <div className="lg:col-span-1 space-y-6">
+                    
+                    {/* Programs Section */}
+                    <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
+                          <Folder size={14} className="text-[#2563EB]" /> Programs
+                        </h4>
+                        <button
+                          onClick={() => {
+                            setEditingProgram(null);
+                            const activeStatus = acadLookups.statuses.find((s: any) => s.code === "active")?.id || "";
+                            const publicVisibility = acadLookups.visibilityTypes.find((v: any) => v.code === "public")?.id || "";
+                            setProgramForm({ title: "", slug: "", description: "", status_id: activeStatus, visibility_type_id: publicVisibility });
+                            setProgramModalOpen(true);
+                          }}
+                          className="flex items-center gap-1 bg-[#2563EB] text-white px-2 py-1 rounded-lg hover:bg-[#2563EB]/95 transition-all text-[10px] font-bold shadow-sm"
+                        >
+                          <Plus size={12} /> Add
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                        {acadPrograms.length > 0 ? (
+                          acadPrograms.map((prog) => (
+                            <div
+                              key={prog.id}
+                              onClick={() => {
+                                setAcadSelectedProgram(prog);
+                                setAcadSelectedCourse(null);
+                              }}
+                              className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                                acadSelectedProgram?.id === prog.id
+                                  ? "bg-[#2563EB]/10 border-[#2563EB]/30 text-[#2563EB]"
+                                  : "bg-slate-50/50 hover:bg-slate-50 border-[#E2E8F0] text-[#0F172A]"
+                              }`}
+                            >
+                              <div className="min-w-0 pr-2">
+                                <p className="font-semibold truncate">{prog.title}</p>
+                                <p className="text-[10px] text-[#475569] font-mono truncate">/{prog.slug}</p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingProgram(prog);
+                                    setProgramForm({
+                                      title: prog.title,
+                                      slug: prog.slug,
+                                      description: prog.description || "",
+                                      status_id: prog.status_id,
+                                      visibility_type_id: prog.visibility_type_id
+                                    });
+                                    setProgramModalOpen(true);
+                                  }}
+                                  className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                >
+                                  <Edit size={12} />
+                                </button>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (confirm("Are you sure you want to delete this program?")) {
+                                      const res = await deleteProgramAction(prog.id);
+                                      if (res.error) setError(res.error);
+                                      else {
+                                        setSuccess("Program deleted successfully!");
+                                        if (acadSelectedProgram?.id === prog.id) setAcadSelectedProgram(null);
+                                        await refreshPrograms();
+                                      }
+                                    }
+                                  }}
+                                  className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-700"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-[11px] text-[#475569] text-center py-4 bg-slate-50/50 rounded-lg">No programs registered yet.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Courses Section */}
+                    {acadSelectedProgram && (
+                      <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="min-w-0 pr-2">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
+                              <GraduationCap size={14} className="text-[#2563EB]" /> Courses
+                            </h4>
+                            <p className="text-[10px] text-[#475569] truncate font-medium">under: {acadSelectedProgram.title}</p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setEditingCourse(null);
+                              const activeStatus = acadLookups.statuses.find((s: any) => s.code === "active")?.id || "";
+                              const publicVisibility = acadLookups.visibilityTypes.find((v: any) => v.code === "public")?.id || "";
+                              const defaultType = acadLookups.courseTypes[0]?.id || "";
+                              setCourseForm({
+                                title: "",
+                                slug: "",
+                                description: "",
+                                course_type_id: defaultType,
+                                status_id: activeStatus,
+                                visibility_type_id: publicVisibility,
+                                enrollment_mode: "open",
+                                duration_minutes: 60,
+                                thumbnail_path: ""
+                              });
+                              setCourseModalOpen(true);
+                            }}
+                            className="flex items-center gap-1 bg-[#2563EB] text-white px-2 py-1 rounded-lg hover:bg-[#2563EB]/95 transition-all text-[10px] font-bold shadow-sm shrink-0"
+                          >
+                            <Plus size={12} /> Add
+                          </button>
+                        </div>
+
+                        <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+                          {acadCourses.length > 0 ? (
+                            acadCourses.map((crs) => (
+                              <div
+                                key={crs.id}
+                                onClick={() => setAcadSelectedCourse(crs)}
+                                className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                                  acadSelectedCourse?.id === crs.id
+                                    ? "bg-[#2563EB]/10 border-[#2563EB]/30 text-[#2563EB]"
+                                    : "bg-slate-50/50 hover:bg-slate-50 border-[#E2E8F0] text-[#0F172A]"
+                                }`}
+                              >
+                                <div className="min-w-0 pr-2">
+                                  <p className="font-semibold truncate">{crs.title}</p>
+                                  <p className="text-[10px] text-[#475569] truncate font-mono">/{crs.slug}</p>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingCourse(crs);
+                                      setCourseForm({
+                                        title: crs.title,
+                                        slug: crs.slug,
+                                        description: crs.description || "",
+                                        course_type_id: crs.course_type_id || "",
+                                        status_id: crs.status_id || "",
+                                        visibility_type_id: crs.visibility_type_id || "",
+                                        enrollment_mode: crs.enrollment_mode || "open",
+                                        duration_minutes: crs.duration_minutes || 0,
+                                        thumbnail_path: crs.thumbnail_path || ""
+                                      });
+                                      setCourseModalOpen(true);
+                                    }}
+                                    className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                  >
+                                    <Edit size={12} />
+                                  </button>
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      if (confirm("Are you sure you want to delete this course?")) {
+                                        const res = await deleteCourseAction(crs.id);
+                                        if (res.error) setError(res.error);
+                                        else {
+                                          setSuccess("Course deleted successfully!");
+                                          if (acadSelectedCourse?.id === crs.id) setAcadSelectedCourse(null);
+                                          await refreshCourses();
+                                        }
+                                      }
+                                    }}
+                                    className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-700"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-[11px] text-[#475569] text-center py-4 bg-slate-50/50 rounded-lg font-medium">No courses in this program.</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right 2 Columns: Selected Course Curriculum & Instructors */}
+                  <div className="lg:col-span-2 space-y-6">
+                    {acadSelectedCourse ? (
+                      <>
+                        {/* Course Overview & Instructors Map */}
+                        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-6">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-[#E2E8F0] pb-4">
+                            <div>
+                              <h3 className="text-sm font-bold text-[#0F172A]">{acadSelectedCourse.title}</h3>
+                              <p className="text-xs text-[#475569] mt-0.5">{acadSelectedCourse.description || "No description set for this course."}</p>
+                            </div>
+                            <div className="mt-2 sm:mt-0 bg-slate-100 px-3 py-1.5 rounded-lg text-[11px] text-[#0F172A] border border-[#E2E8F0] font-mono shrink-0 font-semibold">
+                              Duration: {acadSelectedCourse.duration_minutes || 0} mins
+                            </div>
+                          </div>
+
+                          {/* Instructors Panel */}
+                          <div className="space-y-3">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
+                              <Users size={14} className="text-[#2563EB]" /> Course Instructors (Teachers/Trainers)
+                            </h4>
+                            
+                            <form onSubmit={handleSaveInstructors} className="space-y-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[160px] overflow-y-auto p-1 border border-[#E2E8F0] rounded-lg">
+                                {acadTenantTeachers.length > 0 ? (
+                                  acadTenantTeachers.map((teach) => {
+                                    const isAssigned = acadInstructors.some(i => i.user_id === teach.id);
+                                    return (
+                                      <label key={teach.id} className="flex items-center gap-2 px-3 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg cursor-pointer text-xs transition-colors">
+                                        <input
+                                          type="checkbox"
+                                          checked={isAssigned}
+                                          onChange={(e) => {
+                                            if (e.target.checked) {
+                                              setAcadInstructors([...acadInstructors, { user_id: teach.id, user: teach }]);
+                                            } else {
+                                              setAcadInstructors(acadInstructors.filter(i => i.user_id !== teach.id));
+                                            }
+                                          }}
+                                          className="rounded border-[#E2E8F0] text-[#2563EB] focus:ring-[#2563EB] h-3.5 w-3.5"
+                                        />
+                                        <div className="min-w-0">
+                                          <p className="font-semibold text-[#0F172A] truncate">{teach.full_name}</p>
+                                          <p className="text-[10px] text-[#475569] truncate font-medium">{teach.email}</p>
+                                        </div>
+                                      </label>
+                                    );
+                                  })
+                                ) : (
+                                  <p className="col-span-2 text-[11px] text-[#475569] text-center py-4 font-medium">No active teachers/trainers found in this tenant space.</p>
+                                )}
+                              </div>
+                              {acadTenantTeachers.length > 0 && (
+                                <button
+                                  type="submit"
+                                  disabled={loading}
+                                  className="flex items-center gap-1.5 bg-[#2563EB] text-white px-3.5 py-2 rounded-lg hover:bg-[#2563EB]/95 transition-all text-xs font-semibold shadow-sm disabled:opacity-50"
+                                >
+                                  <Save size={13} />
+                                  {loading ? "Saving Mapping..." : "Save Assigned Instructors"}
+                                </button>
+                              )}
+                            </form>
+                          </div>
+                        </div>
+
+                        {/* Curriculum Modules & Lessons Explorer */}
+                        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-4">
+                          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
+                              <FolderPlus size={15} className="text-[#2563EB]" /> Course Curriculum Modules
+                            </h4>
+                            <button
+                              onClick={() => {
+                                setEditingModule(null);
+                                const activeStatus = acadLookups.statuses.find((s: any) => s.code === "active")?.id || "";
+                                setModuleForm({ title: "", description: "", position: acadModules.length + 1, status_id: activeStatus });
+                                setModuleModalOpen(true);
+                              }}
+                              className="flex items-center gap-1 bg-[#2563EB] text-white px-2.5 py-1.5 rounded-lg hover:bg-[#2563EB]/95 transition-all text-[11px] font-bold shadow-sm"
+                            >
+                              <Plus size={13} /> Create Module
+                            </button>
+                          </div>
+
+                          <div className="space-y-4">
+                            {acadModules.length > 0 ? (
+                              acadModules.map((mod) => (
+                                <div key={mod.id} className="border border-[#E2E8F0] rounded-xl overflow-hidden shadow-sm bg-slate-50/20">
+                                  {/* Module Header */}
+                                  <div className="bg-slate-50 px-4 py-3 flex items-center justify-between border-b border-[#E2E8F0]">
+                                    <div className="min-w-0 pr-2">
+                                      <p className="font-semibold text-xs text-[#0F172A] truncate">
+                                        Module {mod.position}: {mod.title}
+                                      </p>
+                                      {mod.description && <p className="text-[10px] text-[#475569] truncate mt-0.5">{mod.description}</p>}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <button
+                                        onClick={() => {
+                                          setLessonSelectedModuleId(mod.id);
+                                          setEditingLesson(null);
+                                          const activeStatus = acadLookups.statuses.find((s: any) => s.code === "active")?.id || "";
+                                          const defaultType = acadLookups.lessonTypes[0]?.id || "";
+                                          setLessonForm({
+                                            title: "",
+                                            lesson_type_id: defaultType,
+                                            content_json_str: "{}",
+                                            video_url: "",
+                                            duration: 15,
+                                            position: (mod.lessons?.length || 0) + 1,
+                                            is_preview: false,
+                                            status_id: activeStatus
+                                          });
+                                          setLessonModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-1 bg-white border border-[#E2E8F0] hover:bg-slate-50 px-2 py-1 rounded text-[10px] font-bold text-[#0F172A] shadow-xs"
+                                      >
+                                        <Plus size={11} /> Add Lesson
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setEditingModule(mod);
+                                          setModuleForm({
+                                            title: mod.title,
+                                            description: mod.description || "",
+                                            position: mod.position,
+                                            status_id: mod.status_id
+                                          });
+                                          setModuleModalOpen(true);
+                                        }}
+                                        className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                      >
+                                        <Edit size={12} />
+                                      </button>
+                                      <button
+                                        onClick={async () => {
+                                          if (confirm("Are you sure you want to delete this module?")) {
+                                            const res = await deleteModuleAction(mod.id);
+                                            if (res.error) setError(res.error);
+                                            else {
+                                              setSuccess("Module deleted successfully!");
+                                              await refreshCourseDetails(acadSelectedCourse.id);
+                                            }
+                                          }
+                                        }}
+                                        className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-700"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Lessons under this module */}
+                                  <div className="p-4 space-y-3">
+                                    {mod.lessons && mod.lessons.length > 0 ? (
+                                      mod.lessons.map((les: any) => (
+                                        <div key={les.id} className="bg-white border border-[#E2E8F0] rounded-xl p-3.5 space-y-3 shadow-xs">
+                                          <div className="flex items-start justify-between">
+                                            <div className="min-w-0 pr-2">
+                                              <div className="flex items-center gap-2">
+                                                <span className="font-semibold text-xs text-[#0F172A]">{les.title}</span>
+                                                <span className="text-[9px] bg-slate-100 text-[#475569] px-1.5 py-0.5 rounded font-bold font-mono">
+                                                  {les.lesson_type?.code || "lesson"}
+                                                </span>
+                                                {les.is_preview && (
+                                                  <span className="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-bold border border-emerald-100">
+                                                    Preview
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <p className="text-[10px] text-[#475569] mt-0.5 font-mono font-medium">
+                                                Position: {les.position} • {les.duration || 0} mins
+                                              </p>
+                                            </div>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                              <button
+                                                onClick={() => {
+                                                  setResourceSelectedLessonId(les.id);
+                                                  setResourceForm({
+                                                    title: "",
+                                                    resource_type: "link",
+                                                    file_url: "",
+                                                    external_url: "",
+                                                    position: (les.resources?.length || 0) + 1
+                                                  });
+                                                  setResourceModalOpen(true);
+                                                }}
+                                                className="flex items-center gap-1 hover:bg-slate-100 text-[10px] text-[#2563EB] font-bold px-2 py-1 rounded"
+                                              >
+                                                <Link2 size={12} /> Resource
+                                              </button>
+                                              <button
+                                                onClick={() => {
+                                                  setEditingLesson(les);
+                                                  setLessonSelectedModuleId(mod.id);
+                                                  setLessonForm({
+                                                    title: les.title,
+                                                    lesson_type_id: les.lesson_type_id,
+                                                    content_json_str: JSON.stringify(les.content_json || {}),
+                                                    video_url: les.video_url || "",
+                                                    duration: les.duration || 0,
+                                                    position: les.position || 1,
+                                                    is_preview: les.is_preview || false,
+                                                    status_id: les.status_id
+                                                  });
+                                                  setLessonModalOpen(true);
+                                                }}
+                                                className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                              >
+                                                <Edit size={12} />
+                                              </button>
+                                              <button
+                                                onClick={async () => {
+                                                  if (confirm("Are you sure you want to delete this lesson?")) {
+                                                    const res = await deleteLessonAction(les.id);
+                                                    if (res.error) setError(res.error);
+                                                    else {
+                                                      setSuccess("Lesson deleted successfully!");
+                                                      await refreshCourseDetails(acadSelectedCourse.id);
+                                                    }
+                                                  }
+                                                }}
+                                                className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-700"
+                                              >
+                                                <Trash2 size={12} />
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          {/* Lesson Resource list */}
+                                          {les.resources && les.resources.length > 0 && (
+                                            <div className="bg-slate-50/50 border border-[#E2E8F0] rounded-lg p-2 space-y-1.5">
+                                              <p className="text-[10px] font-bold uppercase tracking-wider text-[#475569] px-1">Attachments & External Resources</p>
+                                              <div className="divide-y divide-[#E2E8F0] bg-white rounded-md border border-[#E2E8F0]">
+                                                {les.resources.map((res: any) => (
+                                                  <div key={res.id} className="px-2 py-1.5 flex items-center justify-between text-[11px]">
+                                                    <div className="flex items-center gap-1.5 min-w-0">
+                                                      <File size={12} className="text-[#475569] shrink-0" />
+                                                      <span className="font-semibold text-[#0F172A] truncate">{res.title}</span>
+                                                      <span className="text-[9px] bg-slate-100 text-[#475569] px-1 rounded-sm">{res.resource_type}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                                      {res.external_url && (
+                                                        <a href={res.external_url} target="_blank" rel="noopener noreferrer" className="p-0.5 text-[#2563EB] hover:text-[#2563EB]/80">
+                                                          <ExternalLink size={12} />
+                                                        </a>
+                                                      )}
+                                                      <button
+                                                        onClick={async () => {
+                                                          if (confirm("Remove this resource attachment?")) {
+                                                            const delRes = await deleteLessonResourceAction(res.id);
+                                                            if (delRes.error) setError(delRes.error);
+                                                            else {
+                                                              setSuccess("Resource removed successfully!");
+                                                              await refreshCourseDetails(acadSelectedCourse.id);
+                                                            }
+                                                          }
+                                                        }}
+                                                        className="p-0.5 text-red-500 hover:text-red-700"
+                                                      >
+                                                        <Trash2 size={12} />
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <p className="text-[11px] text-[#475569] text-center py-2 font-medium">No lessons created in this module.</p>
+                                    )}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-[11px] text-[#475569] text-center py-6 bg-slate-50/50 rounded-xl font-medium">No curriculum modules defined. Add a module to begin.</p>
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="bg-white border border-[#E2E8F0] rounded-xl p-12 text-center shadow-sm">
+                        <Folder className="mx-auto text-slate-300 mb-2" size={32} />
+                        <p className="text-xs text-[#475569] font-medium">Select a Course on the left to start configuring its syllabus curriculum.</p>
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              )}
+
+              {/* MODALS */}
+              
+              {/* Program Modal */}
+              {programModalOpen && (
+                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#0F172A]">{editingProgram ? "Edit Academic Program" : "Create New Program"}</h3>
+                    <form onSubmit={handleProgramSubmit} className="space-y-4 text-xs">
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Program Title *</label>
+                        <input
+                          type="text"
+                          required
+                          value={programForm.title}
+                          onChange={(e) => setProgramForm({ ...programForm, title: e.target.value })}
+                          placeholder="e.g. Full Stack Web Development"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">URL Slug (Unique per Tenant) *</label>
+                        <input
+                          type="text"
+                          required
+                          value={programForm.slug}
+                          onChange={(e) => setProgramForm({ ...programForm, slug: e.target.value })}
+                          placeholder="e.g. full-stack-dev"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Description</label>
+                        <textarea
+                          value={programForm.description}
+                          onChange={(e) => setProgramForm({ ...programForm, description: e.target.value })}
+                          placeholder="Provide a brief curriculum program overview..."
+                          rows={3}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <select
+                            value={programForm.status_id}
+                            onChange={(e) => setProgramForm({ ...programForm, status_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.statuses.map((s: any) => (
+                              <option key={s.id} value={s.id}>{s.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Visibility *</label>
+                          <select
+                            value={programForm.visibility_type_id}
+                            onChange={(e) => setProgramForm({ ...programForm, visibility_type_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.visibilityTypes.map((v: any) => (
+                              <option key={v.id} value={v.id}>{v.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                        <button
+                          type="button"
+                          onClick={() => setProgramModalOpen(false)}
+                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                        >
+                          {loading ? "Saving..." : "Save Program"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Course Modal */}
+              {courseModalOpen && (
+                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#0F172A]">{editingCourse ? "Edit Course" : "Create New Course"}</h3>
+                    <form onSubmit={handleCourseSubmit} className="space-y-4 text-xs">
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Course Title *</label>
+                        <input
+                          type="text"
+                          required
+                          value={courseForm.title}
+                          onChange={(e) => setCourseForm({ ...courseForm, title: e.target.value })}
+                          placeholder="e.g. Intro to React & Next.js"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">URL Slug (Unique per Tenant) *</label>
+                        <input
+                          type="text"
+                          required
+                          value={courseForm.slug}
+                          onChange={(e) => setCourseForm({ ...courseForm, slug: e.target.value })}
+                          placeholder="e.g. react-nextjs-intro"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Description</label>
+                        <textarea
+                          value={courseForm.description}
+                          onChange={(e) => setCourseForm({ ...courseForm, description: e.target.value })}
+                          placeholder="Provide a syllabus course description..."
+                          rows={2}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Course Type *</label>
+                          <select
+                            value={courseForm.course_type_id}
+                            onChange={(e) => setCourseForm({ ...courseForm, course_type_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.courseTypes.map((t: any) => (
+                              <option key={t.id} value={t.id}>{t.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Enrollment Mode *</label>
+                          <select
+                            value={courseForm.enrollment_mode}
+                            onChange={(e) => setCourseForm({ ...courseForm, enrollment_mode: e.target.value as any })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            <option value="open">Open Access</option>
+                            <option value="approval">Approval Required</option>
+                            <option value="private">Private Access</option>
+                            <option value="institution_only">Institution Members Only</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-1">
+                          <label className="block font-semibold mb-1 text-[#475569]">Duration (Mins)</label>
+                          <input
+                            type="number"
+                            value={courseForm.duration_minutes}
+                            onChange={(e) => setCourseForm({ ...courseForm, duration_minutes: Number(e.target.value) })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          />
+                        </div>
+                        <div className="col-span-1">
+                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <select
+                            value={courseForm.status_id}
+                            onChange={(e) => setCourseForm({ ...courseForm, status_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.statuses.map((s: any) => (
+                              <option key={s.id} value={s.id}>{s.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="col-span-1">
+                          <label className="block font-semibold mb-1 text-[#475569]">Visibility *</label>
+                          <select
+                            value={courseForm.visibility_type_id}
+                            onChange={(e) => setCourseForm({ ...courseForm, visibility_type_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.visibilityTypes.map((v: any) => (
+                              <option key={v.id} value={v.id}>{v.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                        <button
+                          type="button"
+                          onClick={() => setCourseModalOpen(false)}
+                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                        >
+                          {loading ? "Saving..." : "Save Course"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Module Modal */}
+              {moduleModalOpen && (
+                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#0F172A]">{editingModule ? "Edit Module" : "Create New Module"}</h3>
+                    <form onSubmit={handleModuleSubmit} className="space-y-4 text-xs">
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Module Title *</label>
+                        <input
+                          type="text"
+                          required
+                          value={moduleForm.title}
+                          onChange={(e) => setModuleForm({ ...moduleForm, title: e.target.value })}
+                          placeholder="e.g. Getting Started with React"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Description</label>
+                        <textarea
+                          value={moduleForm.description}
+                          onChange={(e) => setModuleForm({ ...moduleForm, description: e.target.value })}
+                          placeholder="Module syllabus description..."
+                          rows={2}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Position Order *</label>
+                          <input
+                            type="number"
+                            required
+                            value={moduleForm.position}
+                            onChange={(e) => setModuleForm({ ...moduleForm, position: Number(e.target.value) })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <select
+                            value={moduleForm.status_id}
+                            onChange={(e) => setModuleForm({ ...moduleForm, status_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.statuses.map((s: any) => (
+                              <option key={s.id} value={s.id}>{s.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                        <button
+                          type="button"
+                          onClick={() => setModuleModalOpen(false)}
+                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                        >
+                          {loading ? "Saving..." : "Save Module"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Lesson Modal */}
+              {lessonModalOpen && (
+                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#0F172A]">{editingLesson ? "Edit Lesson" : "Create New Lesson"}</h3>
+                    <form onSubmit={handleLessonSubmit} className="space-y-4 text-xs">
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Lesson Title *</label>
+                        <input
+                          type="text"
+                          required
+                          value={lessonForm.title}
+                          onChange={(e) => setLessonForm({ ...lessonForm, title: e.target.value })}
+                          placeholder="e.g. 1.1 Intro to Components"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Lesson Type *</label>
+                          <select
+                            value={lessonForm.lesson_type_id}
+                            onChange={(e) => setLessonForm({ ...lessonForm, lesson_type_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.lessonTypes.map((t: any) => (
+                              <option key={t.id} value={t.id}>{t.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <select
+                            value={lessonForm.status_id}
+                            onChange={(e) => setLessonForm({ ...lessonForm, status_id: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            {acadLookups.statuses.map((s: any) => (
+                              <option key={s.id} value={s.id}>{s.description}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-1">
+                          <label className="block font-semibold mb-1 text-[#475569]">Position Order *</label>
+                          <input
+                            type="number"
+                            required
+                            value={lessonForm.position}
+                            onChange={(e) => setLessonForm({ ...lessonForm, position: Number(e.target.value) })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          />
+                        </div>
+                        <div className="col-span-1">
+                          <label className="block font-semibold mb-1 text-[#475569]">Duration (Mins) *</label>
+                          <input
+                            type="number"
+                            required
+                            value={lessonForm.duration}
+                            onChange={(e) => setLessonForm({ ...lessonForm, duration: Number(e.target.value) })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          />
+                        </div>
+                        <div className="col-span-1 flex items-center pt-5">
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={lessonForm.is_preview}
+                              onChange={(e) => setLessonForm({ ...lessonForm, is_preview: e.target.checked })}
+                              className="rounded border-[#E2E8F0] text-[#2563EB] focus:ring-[#2563EB]"
+                            />
+                            <span className="font-semibold text-[#475569]">Is Preview?</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Video Lecture URL</label>
+                        <input
+                          type="text"
+                          value={lessonForm.video_url}
+                          onChange={(e) => setLessonForm({ ...lessonForm, video_url: e.target.value })}
+                          placeholder="e.g. https://youtube.com/... or Vimeo"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Structured Content (JSON)</label>
+                        <textarea
+                          value={lessonForm.content_json_str}
+                          onChange={(e) => setLessonForm({ ...lessonForm, content_json_str: e.target.value })}
+                          rows={4}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                        />
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                        <button
+                          type="button"
+                          onClick={() => setLessonModalOpen(false)}
+                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                        >
+                          {loading ? "Saving..." : "Save Lesson"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              {/* Resource Attachment Modal */}
+              {resourceModalOpen && (
+                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#0F172A]">Attach Lesson Resource</h3>
+                    <form onSubmit={handleResourceSubmit} className="space-y-4 text-xs">
+                      <div>
+                        <label className="block font-semibold mb-1 text-[#475569]">Resource Title *</label>
+                        <input
+                          type="text"
+                          required
+                          value={resourceForm.title}
+                          onChange={(e) => setResourceForm({ ...resourceForm, title: e.target.value })}
+                          placeholder="e.g. Component Cheatsheet PDF"
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Resource Type *</label>
+                          <select
+                            value={resourceForm.resource_type}
+                            onChange={(e) => setResourceForm({ ...resourceForm, resource_type: e.target.value })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          >
+                            <option value="link">External URL Link</option>
+                            <option value="file">File Attachment</option>
+                            <option value="pdf">PDF Document</option>
+                            <option value="video">Reference Video</option>
+                            <option value="code">Source Code Repository</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">Position Order *</label>
+                          <input
+                            type="number"
+                            required
+                            value={resourceForm.position}
+                            onChange={(e) => setResourceForm({ ...resourceForm, position: Number(e.target.value) })}
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          />
+                        </div>
+                      </div>
+                      {resourceForm.resource_type === "file" || resourceForm.resource_type === "pdf" ? (
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">File URL *</label>
+                          <input
+                            type="text"
+                            required
+                            value={resourceForm.file_url}
+                            onChange={(e) => setResourceForm({ ...resourceForm, file_url: e.target.value })}
+                            placeholder="e.g. https://storage.hynox.com/file.pdf"
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block font-semibold mb-1 text-[#475569]">External URL *</label>
+                          <input
+                            type="text"
+                            required
+                            value={resourceForm.external_url}
+                            onChange={(e) => setResourceForm({ ...resourceForm, external_url: e.target.value })}
+                            placeholder="e.g. https://github.com/... or external link"
+                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                        <button
+                          type="button"
+                          onClick={() => setResourceModalOpen(false)}
+                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={loading}
+                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                        >
+                          {loading ? "Adding..." : "Add Resource"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
               )}
 
             </div>
