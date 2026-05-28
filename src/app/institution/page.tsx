@@ -1,7 +1,10 @@
 import { getCurrentUser } from "@/services/auth";
+import { listOnboardingInvitations } from "@/services/onboarding";
+import { listPrograms, getAcademicLookups, listTenantInstructors } from "@/services/academic";
 import { signOutAction } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
-import { Terminal, Shield, LogOut, Building, Users } from "lucide-react";
+import { Terminal, LogOut } from "lucide-react";
+import InstitutionPanel from "./institution-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -12,73 +15,94 @@ export default async function InstitutionAdminPage() {
     redirect("/login");
   }
 
-  const { authUser, primaryRole, institution } = userDetails;
+  const { authUser, primaryRole, institution, tenantId } = userDetails;
+
+  if (!institution || !tenantId) {
+    redirect("/login");
+  }
+
+  // Load scoped invitations for this institution
+  let invitations: any[] = [];
+  try {
+    const allInvitations = await listOnboardingInvitations();
+    invitations = allInvitations.filter((inv: any) => inv.tenant_id === tenantId);
+  } catch (error) {
+    console.error("Failed to load invitations:", error);
+  }
+
+  // Load programs under this institution
+  let programs: any[] = [];
+  try {
+    programs = await listPrograms(tenantId);
+  } catch (error) {
+    console.error("Failed to load programs:", error);
+  }
+
+  // Load active instructors on this institution
+  let instructors: any[] = [];
+  try {
+    instructors = await listTenantInstructors(tenantId);
+  } catch (error) {
+    console.error("Failed to load instructors:", error);
+  }
+
+  // Load lookups
+  let lookups: any = {
+    courseTypes: [],
+    lessonTypes: [],
+    statuses: [],
+    visibilityTypes: []
+  };
+  try {
+    lookups = await getAcademicLookups();
+  } catch (error) {
+    console.error("Failed to load lookups:", error);
+  }
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col text-[#0F172A] font-sans">
-      <header className="bg-white border-b border-[#E2E8F0] shadow-sm">
+      <header className="bg-white border-b border-[#E2E8F0] shadow-sm sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="bg-[#2563EB]/10 text-[#2563EB] p-2 rounded-xl border border-[#2563EB]/20">
               <Terminal size={18} />
             </div>
-            <span className="font-bold text-sm tracking-tight">Hynox Campus Portal</span>
+            <div className="flex flex-col">
+              <span className="font-bold text-sm tracking-tight">Hynox Campus Portal</span>
+              <span className="text-[10px] text-[#475569] font-medium tracking-wide">CAMPUS DASHBOARD</span>
+            </div>
           </div>
 
-          <form action={signOutAction}>
-            <button
-              type="submit"
-              className="flex items-center gap-1.5 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-3 py-1.5 rounded-lg hover:bg-[#DC2626] hover:text-white transition-all text-xs font-semibold"
-            >
-              <LogOut size={13} />
-              Sign Out
-            </button>
-          </form>
+          <div className="flex items-center gap-4 text-xs">
+            <span className="hidden sm:inline text-[#475569] font-medium">
+              Campus: <strong className="text-[#0F172A] font-bold">{institution.name}</strong>
+            </span>
+            <span className="px-2 py-0.5 rounded-full font-bold border bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20 text-[10px] capitalize">
+              {primaryRole}
+            </span>
+            
+            <form action={signOutAction}>
+              <button
+                type="submit"
+                className="flex items-center gap-1.5 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-3 py-1.5 rounded-lg hover:bg-[#DC2626] hover:text-white transition-all text-xs font-semibold"
+              >
+                <LogOut size={13} />
+                Sign Out
+              </button>
+            </form>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-12 flex-1 w-full space-y-6">
-        <div className="bg-white border border-[#E2E8F0] rounded-xl p-8 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="bg-[#16A34A]/10 text-[#16A34A] p-2.5 rounded-xl border border-[#16A34A]/20">
-              <Building size={20} />
-            </div>
-            <div>
-              <h2 className="text-base font-bold">Institution Administration Hub</h2>
-              <p className="text-xs text-[#475569]">Tenant management console</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-5 mb-6">
-            <div>
-              <span className="text-[10px] font-bold text-[#475569] block uppercase tracking-wide">Admin Email</span>
-              <span className="font-semibold">{authUser.email}</span>
-            </div>
-            <div>
-              <span className="text-[10px] font-bold text-[#475569] block uppercase tracking-wide">Resolved RBAC Role</span>
-              <span className="font-semibold inline-flex px-2 py-0.5 rounded bg-[#16A34A]/15 text-[#16A34A] font-bold mt-1 text-[10px]">
-                {primaryRole}
-              </span>
-            </div>
-            <div className="md:col-span-2 border-t border-[#E2E8F0] pt-3 mt-1">
-              <span className="text-[10px] font-bold text-[#475569] block uppercase tracking-wide">Linked Tenant Institution</span>
-              <span className="font-semibold text-sm block mt-1">
-                {institution ? `${institution.name} (${institution.institution_code})` : "No linked tenant details found."}
-              </span>
-              {institution && (
-                <span className="text-[10px] text-[#475569] block mt-1 font-mono">
-                  Slug: {institution.slug} | Type: {institution.institution_type} | Status: {institution.status}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="border border-dashed border-[#E2E8F0] rounded-xl p-6 text-center text-xs text-[#475569]">
-            <Users className="mx-auto mb-2 text-[#475569]/60" size={30} />
-            <p className="font-medium text-[#0F172A]">Institution Leaderboards & Faculty Registry</p>
-            <p className="mt-1">This module is connected to the backend. Admin verification checks succeeded.</p>
-          </div>
-        </div>
+      <main className="max-w-7xl mx-auto px-6 py-10 flex-1 w-full">
+        <InstitutionPanel 
+          adminEmail={authUser.email} 
+          institution={institution}
+          initialInvitations={invitations}
+          initialPrograms={programs}
+          initialInstructors={instructors}
+          lookups={lookups}
+        />
       </main>
     </div>
   );

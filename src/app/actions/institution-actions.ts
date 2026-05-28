@@ -79,12 +79,18 @@ export async function uploadCsvOnboardingAction(institutionId: string, csvConten
 
   try {
     const userDetails = await getCurrentUser();
-    if (!userDetails || userDetails.primaryRole !== "super_admin") {
-      return { error: "Access denied." };
+    if (!userDetails) return { error: "Access denied." };
+
+    const isSuperAdmin = userDetails.primaryRole === "super_admin";
+    const isInstAdmin = userDetails.primaryRole === "institution_admin" && userDetails.tenantId === institutionId;
+
+    if (!isSuperAdmin && !isInstAdmin) {
+      return { error: "Access denied. Insufficient permissions." };
     }
 
     const results = await processCsvOnboarding(csvContent, institutionId, userDetails.user.id);
     revalidatePath("/admin");
+    revalidatePath("/institution");
     return { success: true, results };
   } catch (error: any) {
     return { error: error.message || "Failed to process CSV onboarding." };
@@ -94,11 +100,20 @@ export async function uploadCsvOnboardingAction(institutionId: string, csvConten
 export async function listInvitationsAction() {
   try {
     const userDetails = await getCurrentUser();
-    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+    if (!userDetails) return { error: "Access denied." };
+
+    const isSuperAdmin = userDetails.primaryRole === "super_admin";
+    const isInstAdmin = userDetails.primaryRole === "institution_admin";
+
+    if (!isSuperAdmin && !isInstAdmin) {
       return { error: "Access denied." };
     }
 
-    const invitations = await listOnboardingInvitations();
+    let invitations = await listOnboardingInvitations();
+    if (isInstAdmin) {
+      // Scope to their own tenant
+      invitations = invitations.filter((inv: any) => inv.tenant_id === userDetails.tenantId);
+    }
     return { success: true, invitations };
   } catch (error: any) {
     return { error: error.message || "Failed to list invitations." };
@@ -112,12 +127,27 @@ export async function regenerateInvitationAction(invitationId: string) {
 
   try {
     const userDetails = await getCurrentUser();
-    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+    if (!userDetails) return { error: "Access denied." };
+
+    const isSuperAdmin = userDetails.primaryRole === "super_admin";
+    const isInstAdmin = userDetails.primaryRole === "institution_admin";
+
+    if (!isSuperAdmin && !isInstAdmin) {
       return { error: "Access denied." };
+    }
+
+    // If institution_admin, we must verify the invitation belongs to their institution
+    if (isInstAdmin) {
+      const allInvites = await listOnboardingInvitations();
+      const invite = allInvites.find((i: any) => i.id === invitationId);
+      if (!invite || invite.tenant_id !== userDetails.tenantId) {
+        return { error: "Access denied. Scoped invitation not found." };
+      }
     }
 
     const res = await regenerateInvitation(invitationId, userDetails.user.id);
     revalidatePath("/admin");
+    revalidatePath("/institution");
     return { success: true, invitation: res };
   } catch (error: any) {
     return { error: error.message || "Failed to regenerate invitation." };
@@ -131,7 +161,12 @@ export async function listInstitutionUsersAction(institutionId: string) {
 
   try {
     const userDetails = await getCurrentUser();
-    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+    if (!userDetails) return { error: "Access denied." };
+
+    const isSuperAdmin = userDetails.primaryRole === "super_admin";
+    const isInstAdmin = userDetails.primaryRole === "institution_admin" && userDetails.tenantId === institutionId;
+
+    if (!isSuperAdmin && !isInstAdmin) {
       return { error: "Access denied." };
     }
 
@@ -155,7 +190,12 @@ export async function onboardSingleUserAction(params: {
 
   try {
     const userDetails = await getCurrentUser();
-    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+    if (!userDetails) return { error: "Access denied." };
+
+    const isSuperAdmin = userDetails.primaryRole === "super_admin";
+    const isInstAdmin = userDetails.primaryRole === "institution_admin" && userDetails.tenantId === institutionId;
+
+    if (!isSuperAdmin && !isInstAdmin) {
       return { error: "Access denied." };
     }
 
@@ -168,6 +208,7 @@ export async function onboardSingleUserAction(params: {
     });
 
     revalidatePath("/admin");
+    revalidatePath("/institution");
     return { success: true, result };
   } catch (error: any) {
     return { error: error.message || "Failed to onboard user." };
