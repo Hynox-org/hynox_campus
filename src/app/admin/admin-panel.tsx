@@ -73,10 +73,12 @@ import {
   FolderPlus,
   Save,
   Users,
-  BookOpen
+  BookOpen,
+  UserCheck
 } from "lucide-react";
 import LibraryBuilder from "./library-builder";
 import ProgramManager from "./program-manager";
+import DeliveryManager from "./delivery-manager";
 
 interface AdminPanelProps {
   adminEmail: string;
@@ -85,7 +87,7 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ adminEmail, initialInstitutions, initialInvitations = [] }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics" | "library" | "programs">("institutions");
+  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics" | "library" | "programs" | "cohorts" | "enrollments" | "course_assignments">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
   const [inviteSearch, setInviteSearch] = useState("");
@@ -1084,6 +1086,55 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             <GraduationCap size={16} />
             Programs (Live Content)
           </button>
+
+          <div className="pt-4 pb-2 border-t border-[#E2E8F0] mt-2">
+            <span className="px-4 text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-2">Delivery Module</span>
+          </div>
+
+          <button
+            onClick={() => {
+              setActiveTab("cohorts");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "cohorts"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <Users size={16} />
+            Cohorts
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("enrollments");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "enrollments"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <UserCheck size={16} />
+            Enrollments
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("course_assignments");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "course_assignments"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <BookOpen size={16} />
+            Course Assignments
+          </button>
         </div>
 
         {/* Content Area */}
@@ -1991,6 +2042,27 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
           {activeTab === "programs" && (
             <div className="space-y-6 animate-fade-in">
               <ProgramManager institutions={institutions} />
+            </div>
+          )}
+
+          {/* TAB 8: COHORTS */}
+          {activeTab === "cohorts" && (
+            <div className="space-y-6 animate-fade-in">
+              <DeliveryManager institutions={institutions} initialTab="cohorts" />
+            </div>
+          )}
+
+          {/* TAB 9: ENROLLMENTS */}
+          {activeTab === "enrollments" && (
+            <div className="space-y-6 animate-fade-in">
+              <DeliveryManager institutions={institutions} initialTab="enrollments" />
+            </div>
+          )}
+
+          {/* TAB 10: COURSE ASSIGNMENTS */}
+          {activeTab === "course_assignments" && (
+            <div className="space-y-6 animate-fade-in">
+              <DeliveryManager institutions={institutions} initialTab="assignments" />
             </div>
           )}
 

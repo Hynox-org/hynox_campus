@@ -1,6 +1,6 @@
 import { getCurrentUser } from "@/services/auth";
 import { signOutAction } from "@/app/actions/auth-actions";
-import { listPrograms } from "@/services/academic";
+import { getStudentDeliveryData } from "@/services/delivery";
 import { redirect } from "next/navigation";
 import { Terminal, LogOut } from "lucide-react";
 import StudentConsole from "./student-console";
@@ -14,16 +14,14 @@ export default async function StudentPage() {
     redirect("/login");
   }
 
-  const { authUser, primaryRole, institution, tenantId } = userDetails;
+  const { authUser, primaryRole, institution } = userDetails;
 
-  // Fetch active programs under their institution
+  // Fetch active delivery programs/courses/cohorts under their enrollment
   let programs: any[] = [];
-  if (tenantId) {
-    try {
-      programs = await listPrograms(tenantId, true); // Active only for students
-    } catch (error) {
-      console.error("Failed to load student programs:", error);
-    }
+  try {
+    programs = await getStudentDeliveryData(userDetails.user.id);
+  } catch (error) {
+    console.error("Failed to load student programs:", error);
   }
 
   return (
@@ -68,6 +66,7 @@ export default async function StudentPage() {
           primaryRole={primaryRole}
           institution={institution}
           initialPrograms={programs}
+          studentId={userDetails.user.id}
         />
       </main>
     </div>
