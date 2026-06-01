@@ -13,6 +13,8 @@ import { redirect } from "next/navigation";
 import { BookOpen, ArrowLeft, Users, FolderKanban } from "lucide-react";
 import CourseSpaceConsole from "./course-space-console";
 
+import { getCourseTemplateMetadata } from "@/services/library";
+
 export const dynamic = "force-dynamic";
 
 interface CourseDetailPageProps {
@@ -35,6 +37,12 @@ export default async function CourseDetailPage({ params }: CourseDetailPageProps
 
   const course = await getCourseBySlug(courseSlug, tenantId || "");
   if (!course) redirect(`/academic/${programSlug}`);
+
+  // Fetch blueprint/traceability metadata if instantiated
+  let sourceTemplateInfo = null;
+  if (course.source_template_id) {
+    sourceTemplateInfo = await getCourseTemplateMetadata(course.source_template_id);
+  }
 
   // Fetch instructors for the course
   const courseInstructors = await getCourseInstructors(course.id);
@@ -70,6 +78,19 @@ export default async function CourseDetailPage({ params }: CourseDetailPageProps
             <p className="text-xs text-[#475569] mt-2 max-w-3xl leading-relaxed">
               {course.description || "No course description provided."}
             </p>
+            {sourceTemplateInfo && primaryRole !== "student" && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-[10px] bg-slate-100 text-[#475569] border border-[#E2E8F0] px-2.5 py-1 rounded-lg font-medium">
+                  Source Template: <strong className="font-semibold text-[#0F172A]">{sourceTemplateInfo.title}</strong>
+                </span>
+                <span className="text-[10px] bg-slate-100 text-[#475569] border border-[#E2E8F0] px-2.5 py-1 rounded-lg font-medium">
+                  Version: <strong className="font-semibold text-[#0F172A]">v{sourceTemplateInfo.version}</strong>
+                </span>
+                <span className="text-[10px] bg-slate-100 text-[#475569] border border-[#E2E8F0] px-2.5 py-1 rounded-lg font-mono text-[9px] select-all">
+                  ID: {course.source_template_id}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm shrink-0">

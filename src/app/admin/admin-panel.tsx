@@ -72,8 +72,11 @@ import {
   ChevronRight,
   FolderPlus,
   Save,
-  Users
+  Users,
+  BookOpen
 } from "lucide-react";
+import LibraryBuilder from "./library-builder";
+import ProgramManager from "./program-manager";
 
 interface AdminPanelProps {
   adminEmail: string;
@@ -82,7 +85,7 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ adminEmail, initialInstitutions, initialInvitations = [] }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics">("institutions");
+  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics" | "library" | "programs">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
   const [inviteSearch, setInviteSearch] = useState("");
@@ -1054,17 +1057,32 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
           <button
             onClick={() => {
-              setActiveTab("academics");
+              setActiveTab("library");
               clearStatuses();
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
-              activeTab === "academics"
+              activeTab === "library"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <BookOpen size={16} />
+            Library (Blueprints)
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("programs");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "programs"
                 ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
                 : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
             }`}
           >
             <GraduationCap size={16} />
-            Academic Builder
+            Programs (Live Content)
           </button>
         </div>
 
@@ -1962,8 +1980,22 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
           )}
 
-          {/* TAB 6: ACADEMIC BUILDER */}
-          {activeTab === "academics" && (
+          {/* TAB 6: LIBRARY (BLUEPRINTS) */}
+          {activeTab === "library" && (
+            <div className="space-y-6 animate-fade-in">
+              <LibraryBuilder />
+            </div>
+          )}
+
+          {/* TAB 7: PROGRAMS (LIVE CONTENT) */}
+          {activeTab === "programs" && (
+            <div className="space-y-6 animate-fade-in">
+              <ProgramManager institutions={institutions} />
+            </div>
+          )}
+
+          {/* TAB 6: ACADEMIC BUILDER (DEPRECATED) */}
+          {false && activeTab === "academics" && (
             <div className="space-y-6 animate-fade-in">
               
               {/* Institution Selection */}
