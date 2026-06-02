@@ -74,11 +74,13 @@ import {
   Save,
   Users,
   BookOpen,
-  UserCheck
+  UserCheck,
+  Award
 } from "lucide-react";
 import LibraryBuilder from "./library-builder";
 import ProgramManager from "./program-manager";
 import DeliveryManager from "./delivery-manager";
+import LearningManager from "./learning-manager";
 
 interface AdminPanelProps {
   adminEmail: string;
@@ -87,7 +89,7 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ adminEmail, initialInstitutions, initialInvitations = [] }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics" | "library" | "programs" | "cohorts" | "enrollments" | "course_assignments">("institutions");
+  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics" | "library" | "programs" | "cohorts" | "enrollments" | "course_assignments" | "learning_manager">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
   const [inviteSearch, setInviteSearch] = useState("");
@@ -1135,6 +1137,21 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             <BookOpen size={16} />
             Course Assignments
           </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("learning_manager");
+              clearStatuses();
+            }}
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
+              activeTab === "learning_manager"
+                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
+                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+            }`}
+          >
+            <Award size={16} />
+            Learning Activities
+          </button>
         </div>
 
         {/* Content Area */}
@@ -2063,6 +2080,13 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
           {activeTab === "course_assignments" && (
             <div className="space-y-6 animate-fade-in">
               <DeliveryManager institutions={institutions} initialTab="assignments" />
+            </div>
+          )}
+
+          {/* TAB: LEARNING MANAGER */}
+          {activeTab === "learning_manager" && (
+            <div className="space-y-6 animate-fade-in">
+              <LearningManager institutions={institutions} />
             </div>
           )}
 
