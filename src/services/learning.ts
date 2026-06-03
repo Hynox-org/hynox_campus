@@ -448,6 +448,107 @@ export async function submitProject(
 // ----------------------------------------------------
 // Programming Challenges Operations
 // ----------------------------------------------------
+export async function getStudentAssignedChallenges(studentId: string) {
+  const supabase = await createClient();
+
+  // 1. Get student's active cohorts
+  const { data: enrollments, error: enrollError } = await supabase
+    .schema("delivery")
+    .from("enrollments")
+    .select("cohort_id")
+    .eq("user_id", studentId)
+    .eq("status_code", "active")
+    .is("deleted_at", null);
+
+  if (enrollError) throw enrollError;
+  if (!enrollments || enrollments.length === 0) return [];
+
+  const cohortIds = enrollments.map(e => e.cohort_id);
+
+  // 2. Fetch assignments for these cohorts
+  const { data: assignments, error: assignError } = await supabase
+    .schema("learning")
+    .from("activity_assignments")
+    .select("*")
+    .in("cohort_id", cohortIds)
+    .is("deleted_at", null);
+
+  if (assignError) throw assignError;
+  if (!assignments || assignments.length === 0) return [];
+
+  const activityIds = [...new Set(assignments.map(a => a.activity_id))];
+
+  // 3. Fetch programming challenges joined with activities
+  const { data: challenges, error: chalError } = await supabase
+    .schema("learning")
+    .from("programming_challenges")
+    .select(`
+      id,
+      difficulty_level,
+      activity_id,
+      activities!inner (
+        id,
+        title,
+        description,
+        max_score
+      )
+    `)
+    .in("activity_id", activityIds);
+
+  if (chalError) throw chalError;
+  if (!challenges || challenges.length === 0) return [];
+
+  // 4. Fetch progress records
+  const { data: progressList, error: progError } = await supabase
+    .schema("learning")
+    .from("student_activity_progress")
+    .select("*")
+    .eq("student_id", studentId)
+    .in("activity_id", activityIds)
+    .is("deleted_at", null);
+
+  if (progError) throw progError;
+
+  // 5. Fetch submission attempt counts
+  const { data: submissions, error: subError } = await supabase
+    .schema("learning")
+    .from("challenge_submissions")
+    .select("challenge_id, id")
+    .eq("student_id", studentId);
+
+  // Combine everything
+  return challenges.map(chal => {
+    const act = chal.activities as any;
+    const assignment = assignments.find(a => a.activity_id === chal.activity_id);
+    let progress = progressList?.find(p => p.activity_id === chal.activity_id);
+
+    const attemptsCount = submissions?.filter(s => s.challenge_id === chal.id).length || 0;
+
+    if (!progress) {
+      progress = {
+        status_code: "assigned",
+        score: null,
+        attempt_number: 0,
+        completed_at: null
+      };
+    }
+
+    return {
+      challenge_id: chal.id,
+      activity_id: chal.activity_id,
+      title: act.title,
+      description: act.description,
+      difficulty: chal.difficulty_level,
+      max_score: act.max_score,
+      assigned_date: assignment?.available_from || assignment?.created_at || null,
+      due_date: assignment?.available_until || null,
+      status: progress.status_code,
+      score: progress.score,
+      attempts_count: attemptsCount
+    };
+  });
+}
+
 export async function getProgrammingChallengeDetails(activityId: string, studentId: string) {
   const supabase = await createClient();
 
@@ -460,6 +561,58 @@ export async function getProgrammingChallengeDetails(activityId: string, student
 
   if (chalError) throw chalError;
   if (!challenge) throw new Error("Programming challenge not found.");
+
+  // Fetch or upsert progress status to 'started'
+  const { data: assign } = await supabase
+    .schema("learning")
+    .from("activity_assignments")
+    .select("id")
+    .eq("activity_id", activityId)
+    .limit(1)
+    .maybeSingle();
+
+  let progress = null;
+  if (assign) {
+    const { data: existingProgress } = await supabase
+      .schema("learning")
+      .from("student_activity_progress")
+      .select("*")
+      .eq("student_id", studentId)
+      .eq("activity_assignment_id", assign.id)
+      .maybeSingle();
+
+    if (!existingProgress) {
+      const { data: newProg } = await supabase
+        .schema("learning")
+        .from("student_activity_progress")
+        .insert({
+          student_id: studentId,
+          activity_id: activityId,
+          activity_assignment_id: assign.id,
+          status_code: "started",
+          started_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      progress = newProg;
+    } else {
+      progress = existingProgress;
+      if (existingProgress.status_code === "assigned") {
+        const { data: updatedProg } = await supabase
+          .schema("learning")
+          .from("student_activity_progress")
+          .update({
+            status_code: "started",
+            started_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", existingProgress.id)
+          .select()
+          .single();
+        progress = updatedProg;
+      }
+    }
+  }
 
   const { data: examples } = await supabase
     .schema("learning")
@@ -478,9 +631,54 @@ export async function getProgrammingChallengeDetails(activityId: string, student
 
   return {
     challenge,
+    progress,
     examples: examples || [],
     submissions: submissions || []
   };
+}
+
+export async function getVisibleTestCases(challengeId: string) {
+  const supabase = await createClient();
+  const { data: testCases, error: tcError } = await supabase
+    .schema("learning")
+    .from("challenge_test_cases")
+    .select("id, input_data, expected_output, position")
+    .eq("challenge_id", challengeId)
+    .eq("is_hidden", false)
+    .order("position");
+  if (tcError) throw tcError;
+
+  if (testCases && testCases.length > 0) {
+    return testCases;
+  }
+
+  // Fallback to challenge examples
+  const { data: examples, error: exError } = await supabase
+    .schema("learning")
+    .from("challenge_examples")
+    .select("id, input_example, output_example, example_number")
+    .eq("challenge_id", challengeId)
+    .order("example_number");
+  if (exError) throw exError;
+
+  return (examples || []).map(ex => ({
+    id: ex.id,
+    input_data: ex.input_example,
+    expected_output: ex.output_example,
+    position: ex.example_number
+  }));
+}
+
+export async function getAllTestCasesInternal(challengeId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema("learning")
+    .from("challenge_test_cases")
+    .select("*")
+    .eq("challenge_id", challengeId)
+    .order("position");
+  if (error) throw error;
+  return data || [];
 }
 
 export async function submitChallengeCode(

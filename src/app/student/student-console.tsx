@@ -22,6 +22,7 @@ import {
   submitChallengeCodeAction,
   getChallengeSubmissionResultsAction
 } from "@/app/actions/learning-actions";
+import Link from "next/link";
 import { 
   Building, 
   GraduationCap, 
@@ -393,6 +394,21 @@ export default function StudentConsole({
   const completedActivities = activities.filter(a => a.progress?.status_code === "completed" || a.progress?.status_code === "reviewed").length;
   const pendingActivities = activities.length - completedActivities;
 
+  // Programming challenges specific stats
+  const challengeActivities = activities.filter(a => a.activity_type_code === "programming_challenge" || a.activity_type_code === "programming");
+  const assignedChallengesCount = challengeActivities.length;
+  const completedChallengesCount = challengeActivities.filter(a => a.progress?.status_code === "completed" || a.progress?.status_code === "reviewed").length;
+  const pendingChallengesCount = assignedChallengesCount - completedChallengesCount;
+  
+  const challengeScores = challengeActivities.map(a => a.progress?.score).filter(s => s !== null && s !== undefined).map(Number);
+  const averageChallengeScore = challengeScores.length > 0 ? (challengeScores.reduce((a, b) => a + b, 0) / challengeScores.length).toFixed(1) : "0.0";
+  
+  // Recent submissions/updates from activities
+  const recentSubmissions = [...challengeActivities]
+    .filter(a => a.progress?.status_code !== "assigned")
+    .sort((a, b) => new Date(b.progress?.updated_at || b.progress?.submitted_at || 0).getTime() - new Date(a.progress?.updated_at || a.progress?.submitted_at || 0).getTime())
+    .slice(0, 3);
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start text-xs">
       
@@ -483,24 +499,15 @@ export default function StudentConsole({
             <span className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-bold">{projectCount}</span>
           </button>
 
-          <button
-            onClick={() => {
-              setActiveTab("challenges");
-              setSelectedQuizActivity(null);
-              setSelectedProjectActivity(null);
-              setSelectedChallengeActivity(null);
-            }}
-            className={`flex items-center justify-between w-full px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all mt-1.5 ${
-              activeTab === "challenges"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
-            }`}
+          <Link
+            href="/student/programming"
+            className="flex items-center justify-between w-full px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all mt-1.5 bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
           >
             <span className="flex items-center gap-2.5">
               <TerminalIcon size={16} /> Code Challenges
             </span>
             <span className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.5 rounded-full font-bold">{challengeCount}</span>
-          </button>
+          </Link>
         </div>
       </div>
 
@@ -658,6 +665,70 @@ export default function StudentConsole({
                 </div>
               </div>
             )}
+
+            {/* Programming Challenges Dashboard Card */}
+            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-5">
+              <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-3">
+                <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-1.5">
+                  <TerminalIcon className="text-[#2563EB]" size={16} /> Programming Challenges
+                </h3>
+                <Link
+                  href="/student/programming"
+                  className="text-xs font-bold text-[#2563EB] hover:underline flex items-center gap-1"
+                >
+                  Challenges Hub <ArrowRight size={13} />
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="bg-slate-50 border border-[#E2E8F0] rounded-xl p-4 shadow-sm text-center">
+                  <span className="text-[10px] text-[#475569] block font-semibold uppercase tracking-wider">Assigned</span>
+                  <span className="text-sm font-bold text-[#0F172A]">{assignedChallengesCount}</span>
+                </div>
+                <div className="bg-[#16A34A]/5 border border-[#16A34A]/10 rounded-xl p-4 shadow-sm text-center">
+                  <span className="text-[10px] text-[#16A34A] block font-semibold uppercase tracking-wider">Completed</span>
+                  <span className="text-sm font-bold text-[#16A34A]">{completedChallengesCount}</span>
+                </div>
+                <div className="bg-[#F59E0B]/5 border border-[#F59E0B]/10 rounded-xl p-4 shadow-sm text-center">
+                  <span className="text-[10px] text-[#F59E0B] block font-semibold uppercase tracking-wider">Pending</span>
+                  <span className="text-sm font-bold text-[#F59E0B]">{pendingChallengesCount}</span>
+                </div>
+                <div className="bg-[#2563EB]/5 border border-[#2563EB]/10 rounded-xl p-4 shadow-sm text-center">
+                  <span className="text-[10px] text-[#2563EB] block font-semibold uppercase tracking-wider">Avg Score</span>
+                  <span className="text-sm font-bold text-[#2563EB]">{averageChallengeScore}%</span>
+                </div>
+              </div>
+
+              {recentSubmissions.length > 0 && (
+                <div className="space-y-3 pt-3 border-t border-[#E2E8F0]">
+                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A]">Recent Submissions</h4>
+                  <div className="divide-y divide-[#E2E8F0] bg-slate-50/50 rounded-xl border border-[#E2E8F0] overflow-hidden">
+                    {recentSubmissions.map((act) => {
+                      const statusColor =
+                        act.progress?.status_code === "completed"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                          : act.progress?.status_code === "submitted"
+                          ? "bg-blue-50 text-blue-700 border-blue-100"
+                          : "bg-amber-50 text-amber-700 border-amber-100";
+                      
+                      return (
+                        <div key={act.id} className="p-3 flex justify-between items-center text-xs">
+                          <div>
+                            <span className="font-bold text-[#0F172A]">{act.title}</span>
+                            <span className="text-[9px] text-[#475569] ml-2 block sm:inline">
+                              Score: {act.progress?.score ?? 0} pts
+                            </span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-bold border capitalize ${statusColor}`}>
+                            {act.progress?.status_code}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

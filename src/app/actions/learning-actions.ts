@@ -2,6 +2,7 @@
 
 import * as service from "@/services/learning";
 import { revalidatePath } from "next/cache";
+import * as runner from "@/services/runner";
 
 export async function getStudentAssignedActivitiesAction(studentId: string) {
   try {
@@ -69,12 +70,34 @@ export async function submitProjectAction(
   }
 }
 
+export async function getStudentAssignedChallengesAction(studentId: string) {
+  try {
+    const challenges = await service.getStudentAssignedChallenges(studentId);
+    return { challenges };
+  } catch (error: any) {
+    return { error: error.message || "Failed to load assigned challenges." };
+  }
+}
+
 export async function getProgrammingChallengeDetailsAction(activityId: string, studentId: string) {
   try {
     const data = await service.getProgrammingChallengeDetails(activityId, studentId);
     return data;
   } catch (error: any) {
     return { error: error.message || "Failed to load programming challenge." };
+  }
+}
+
+export async function runChallengeCodeAction(
+  challengeId: string,
+  language: string,
+  sourceCode: string
+) {
+  try {
+    const results = await runner.executeVisibleTests(challengeId, language, sourceCode);
+    return { results };
+  } catch (error: any) {
+    return { error: error.message || "Failed to run challenge code." };
   }
 }
 
@@ -87,6 +110,10 @@ export async function submitChallengeCodeAction(
 ) {
   try {
     const submission = await service.submitChallengeCode(challengeId, studentId, progressId, language, sourceCode);
+    
+    // Automatically trigger Judge Engine execution in background
+    runner.executeAllTestsAndGrade(submission.id).catch(console.error);
+
     revalidatePath("/student");
     return { submission };
   } catch (error: any) {
