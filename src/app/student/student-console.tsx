@@ -1473,7 +1473,6 @@ export default function StudentConsole({
                             className="bg-slate-50 border border-[#E2E8F0] rounded-md px-2 py-1 text-[10px] font-semibold text-[#0F172A] outline-none"
                           >
                             <option value="javascript">JavaScript (Node.js)</option>
-                            <option value="typescript">TypeScript</option>
                             <option value="python">Python 3</option>
                             <option value="java">Java (OpenJDK)</option>
                             <option value="cpp">C++ (GCC)</option>

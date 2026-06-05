@@ -111,8 +111,10 @@ export async function submitChallengeCodeAction(
   try {
     const submission = await service.submitChallengeCode(challengeId, studentId, progressId, language, sourceCode);
     
-    // Automatically trigger Judge Engine execution in background
-    runner.executeAllTestsAndGrade(submission.id).catch(console.error);
+    // Automatically trigger Judge Engine execution in background only if external worker process is disabled
+    if (process.env.JUDGE_WORKER_ENABLED !== "true") {
+      runner.executeAllTestsAndGrade(submission.id).catch(console.error);
+    }
 
     revalidatePath("/student");
     return { submission };

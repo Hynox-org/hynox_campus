@@ -769,6 +769,13 @@ export async function submitChallengeCode(
 export async function getChallengeSubmissionResults(submissionId: string) {
   const supabase = await createClient();
 
+  const { data: submission } = await supabase
+    .schema("learning")
+    .from("challenge_submissions")
+    .select("submission_status_code, language, submitted_at")
+    .eq("id", submissionId)
+    .maybeSingle();
+
   const { data: result } = await supabase
     .schema("learning")
     .from("challenge_submission_results")
@@ -790,6 +797,7 @@ export async function getChallengeSubmissionResults(submissionId: string) {
     .order("created_at");
 
   return {
+    submission: submission || null,
     result: result || null,
     testCases: testCases || [],
     logs: logs || []

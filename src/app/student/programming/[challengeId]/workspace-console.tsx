@@ -363,7 +363,6 @@ export default function WorkspaceConsole({
                   className="bg-white border border-[#E2E8F0] rounded-lg px-2.5 py-1 text-[10px] font-semibold text-[#0F172A] outline-none shadow-sm focus:border-[#2563EB]/30 transition-all"
                 >
                   <option value="javascript">JavaScript (Node.js)</option>
-                  <option value="typescript">TypeScript</option>
                   <option value="python">Python 3</option>
                   <option value="java">Java (OpenJDK)</option>
                   <option value="cpp">C++ (GCC)</option>
