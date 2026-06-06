@@ -59,6 +59,7 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
   const [quizMaxAttempts, setQuizMaxAttempts] = useState(1);
   const [quizShuffleQ, setQuizShuffleQ] = useState(false);
   const [quizShuffleO, setQuizShuffleO] = useState(false);
+  const [quizShowResults, setQuizShowResults] = useState(true);
 
   // Subclass forms: Project
   const [projOverview, setProjOverview] = useState("");
@@ -88,7 +89,7 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
   const [newQuestionType, setNewQuestionType] = useState("single_choice");
   const [newQuestionPoints, setNewQuestionPoints] = useState(10);
   const [newQuestionOptions, setNewQuestionOptions] = useState<string[]>(["", "", "", ""]);
-  const [newQuestionCorrectIndex, setNewQuestionCorrectIndex] = useState(0);
+  const [newQuestionCorrectIndices, setNewQuestionCorrectIndices] = useState<number[]>([0]);
 
   // Child additions helper: Challenge Examples / Test cases
   const [examplesList, setExamplesList] = useState<any[]>([]);
@@ -178,6 +179,7 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
       quiz_max_attempts: quizMaxAttempts,
       quiz_shuffle_questions: quizShuffleQ,
       quiz_shuffle_options: quizShuffleO,
+      quiz_show_results_immediately: quizShowResults,
 
       // Project
       project_overview: projOverview,
@@ -232,7 +234,7 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
     setLoading(true);
     const optionsPayload = newQuestionOptions.filter(o => o.trim()).map((o, idx) => ({
       optionText: o,
-      isCorrect: idx === newQuestionCorrectIndex,
+      isCorrect: newQuestionCorrectIndices.includes(idx),
       position: idx + 1
     }));
 
@@ -250,8 +252,13 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
       setSuccess("Question and options appended successfully!");
       setTimeout(() => setSuccess(""), 3000);
       setNewQuestionText("");
-      setNewQuestionOptions(["", "", "", ""]);
-      setNewQuestionCorrectIndex(0);
+      if (newQuestionType === "true_false") {
+        setNewQuestionOptions(["True", "False"]);
+        setNewQuestionCorrectIndices([0]);
+      } else {
+        setNewQuestionOptions(["", "", "", ""]);
+        setNewQuestionCorrectIndices([0]);
+      }
     } else if (res.error) {
       setError(res.error);
     }
@@ -555,24 +562,58 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
 
                 {/* Subclass-specific fields inside the initial creation step */}
                 {activityType === "quiz" && (
-                  <div className="border-t border-[#E2E8F0] pt-4 grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block font-semibold text-[#475569] mb-1">Time Limit (Minutes)</label>
-                      <input
-                        type="number"
-                        value={quizTimeLimit}
-                        onChange={(e) => setQuizTimeLimit(Number(e.target.value))}
-                        className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none"
-                      />
+                  <div className="border-t border-[#E2E8F0] pt-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block font-semibold text-[#475569] mb-1">Time Limit (Minutes)</label>
+                        <input
+                          type="number"
+                          value={quizTimeLimit}
+                          onChange={(e) => setQuizTimeLimit(Number(e.target.value))}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-[#475569] mb-1">Max AttemptsAllowed</label>
+                        <input
+                          type="number"
+                          value={quizMaxAttempts}
+                          onChange={(e) => setQuizMaxAttempts(Number(e.target.value))}
+                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block font-semibold text-[#475569] mb-1">Max AttemptsAllowed</label>
-                      <input
-                        type="number"
-                        value={quizMaxAttempts}
-                        onChange={(e) => setQuizMaxAttempts(Number(e.target.value))}
-                        className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none"
-                      />
+                    <div className="grid grid-cols-3 gap-4 pt-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={quizShuffleQ}
+                          onChange={(e) => setQuizShuffleQ(e.target.checked)}
+                          id="quizShuffleQ"
+                          className="accent-[#2563EB]"
+                        />
+                        <label htmlFor="quizShuffleQ" className="font-semibold text-[#475569]">Shuffle Questions</label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={quizShuffleO}
+                          onChange={(e) => setQuizShuffleO(e.target.checked)}
+                          id="quizShuffleO"
+                          className="accent-[#2563EB]"
+                        />
+                        <label htmlFor="quizShuffleO" className="font-semibold text-[#475569]">Shuffle Options</label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={quizShowResults}
+                          onChange={(e) => setQuizShowResults(e.target.checked)}
+                          id="quizShowResults"
+                          className="accent-[#2563EB]"
+                        />
+                        <label htmlFor="quizShowResults" className="font-semibold text-[#475569]">Show Results Immediately</label>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -702,13 +743,22 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
                       <label className="block font-semibold text-[#475569] mb-1">Question Type</label>
                       <select
                         value={newQuestionType}
-                        onChange={(e) => setNewQuestionType(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNewQuestionType(val);
+                          if (val === "true_false") {
+                            setNewQuestionOptions(["True", "False"]);
+                            setNewQuestionCorrectIndices([0]);
+                          } else {
+                            setNewQuestionOptions(["", "", "", ""]);
+                            setNewQuestionCorrectIndices([0]);
+                          }
+                        }}
                         className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none"
                       >
                         <option value="single_choice">Single Choice</option>
                         <option value="multiple_choice">Multiple Choice</option>
                         <option value="true_false">True / False</option>
-                        <option value="short_answer">Short Text Answer</option>
                       </select>
                     </div>
                     <div>
@@ -728,22 +778,33 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
                       {newQuestionOptions.map((opt, idx) => (
                         <div key={idx} className="flex items-center gap-2">
                           <input
-                            type="radio"
+                            type={newQuestionType === "multiple_choice" ? "checkbox" : "radio"}
                             name="correctIndex"
-                            checked={newQuestionCorrectIndex === idx}
-                            onChange={() => setNewQuestionCorrectIndex(idx)}
+                            checked={newQuestionCorrectIndices.includes(idx)}
+                            onChange={() => {
+                              if (newQuestionType === "multiple_choice") {
+                                if (newQuestionCorrectIndices.includes(idx)) {
+                                  setNewQuestionCorrectIndices(newQuestionCorrectIndices.filter(i => i !== idx));
+                                } else {
+                                  setNewQuestionCorrectIndices([...newQuestionCorrectIndices, idx]);
+                                }
+                              } else {
+                                setNewQuestionCorrectIndices([idx]);
+                              }
+                            }}
                             className="accent-[#2563EB]"
                           />
                           <input
                             type="text"
                             value={opt}
+                            disabled={newQuestionType === "true_false"}
                             onChange={(e) => {
                               const copy = [...newQuestionOptions];
                               copy[idx] = e.target.value;
                               setNewQuestionOptions(copy);
                             }}
                             placeholder={`Option choice ${idx + 1}`}
-                            className="flex-1 bg-white border border-[#E2E8F0] rounded-lg px-2.5 py-1.5 text-xs outline-none"
+                            className="flex-1 bg-white border border-[#E2E8F0] rounded-lg px-2.5 py-1.5 text-xs outline-none disabled:bg-slate-50 disabled:text-slate-500"
                           />
                         </div>
                       ))}

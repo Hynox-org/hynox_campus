@@ -20,7 +20,9 @@ import {
   submitProjectAction,
   getProgrammingChallengeDetailsAction,
   submitChallengeCodeAction,
-  getChallengeSubmissionResultsAction
+  getChallengeSubmissionResultsAction,
+  getActiveQuizAttemptAction,
+  getQuizSessionDetailsAction
 } from "@/app/actions/learning-actions";
 import Link from "next/link";
 import { 
@@ -84,8 +86,9 @@ export default function StudentConsole({
   const [quizDetails, setQuizDetails] = useState<any | null>(null);
   const [quizQuestions, setQuizQuestions] = useState<any[]>([]);
   const [activeAttempt, setActiveAttempt] = useState<any | null>(null);
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string[]>>({});
   const [quizSubmittedResult, setQuizSubmittedResult] = useState<any | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   // Active project state
   const [selectedProjectActivity, setSelectedProjectActivity] = useState<any | null>(null);
@@ -229,23 +232,50 @@ export default function StudentConsole({
     setActiveAttempt(null);
     setSelectedAnswers({});
     setLoading(true);
-    const res = await getQuizDetailsAction(activity.id);
-    if (res && "quiz" in res) {
-      setQuizDetails(res.quiz);
-      setQuizQuestions(res.questions || []);
-    } else if (res && "error" in res) {
-      setError(res.error);
+    setError("");
+
+    try {
+      // 1. Fetch main quiz configuration
+      const res = await getQuizDetailsAction(activity.id);
+      if (res && "quiz" in res) {
+        setQuizDetails(res.quiz);
+        setQuizQuestions(res.questions || []);
+
+        // 2. Check for any active (unfinished) attempt
+        const activeRes = await getActiveQuizAttemptAction(res.quiz.id, studentId);
+        if (activeRes.attempt) {
+          // Unfinished attempt found, resume it and fetch shuffled session details
+          const sessionRes = await getQuizSessionDetailsAction(activeRes.attempt.id);
+          if (sessionRes && "questions" in sessionRes) {
+            setQuizQuestions(sessionRes.questions);
+            setActiveAttempt(sessionRes.attempt);
+          }
+        }
+      } else if (res && "error" in res) {
+        setError(res.error);
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to load quiz details.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleStartQuiz = async () => {
     if (!quizDetails) return;
     setActionLoading(true);
+    setError("");
     const attemptNum = (selectedQuizActivity.progress?.attempt_number || 0) + 1;
     const res = await startQuizAttemptAction(quizDetails.id, studentId, selectedQuizActivity.progress?.id || "new", attemptNum);
     if (res.attempt) {
-      setActiveAttempt(res.attempt);
+      // Fetch shuffled session questions for this attempt
+      const sessionRes = await getQuizSessionDetailsAction(res.attempt.id);
+      if (sessionRes && "questions" in sessionRes) {
+        setQuizQuestions(sessionRes.questions);
+        setActiveAttempt(sessionRes.attempt);
+      } else {
+        setActiveAttempt(res.attempt);
+      }
       setSelectedAnswers({});
       setSuccess("Quiz attempt started. Good luck!");
       setTimeout(() => setSuccess(""), 3000);
@@ -255,20 +285,40 @@ export default function StudentConsole({
     setActionLoading(false);
   };
 
-  const handleOptionSelect = (questionId: string, optionId: string) => {
-    setSelectedAnswers(prev => ({
-      ...prev,
-      [questionId]: optionId
-    }));
+  const handleOptionSelect = (questionId: string, optionId: string, questionType?: string) => {
+    setSelectedAnswers(prev => {
+      const current = prev[questionId] || [];
+      if (questionType === "multiple_choice") {
+        if (current.includes(optionId)) {
+          return {
+            ...prev,
+            [questionId]: current.filter(id => id !== optionId)
+          };
+        } else {
+          return {
+            ...prev,
+            [questionId]: [...current, optionId]
+          };
+        }
+      } else {
+        return {
+          ...prev,
+          [questionId]: [optionId]
+        };
+      }
+    });
   };
 
   const handleSubmitQuiz = async () => {
     if (!activeAttempt) return;
     setActionLoading(true);
-    const payload = Object.entries(selectedAnswers).map(([qId, optId]) => ({
-      questionId: qId,
-      selectedOptionId: optId
-    }));
+    setError("");
+    const payload = Object.entries(selectedAnswers).flatMap(([qId, optIds]) =>
+      optIds.map(optId => ({
+        questionId: qId,
+        selectedOptionId: optId
+      }))
+    );
 
     const res = await submitQuizAnswersAction(activeAttempt.id, payload);
     if (res.attempt) {
@@ -282,6 +332,55 @@ export default function StudentConsole({
     }
     setActionLoading(false);
   };
+
+  // Countdown Timer logic for quizzes
+  useEffect(() => {
+    if (!activeAttempt || !quizDetails || !quizDetails.time_limit_minutes) {
+      setTimeLeft(null);
+      return;
+    }
+
+    const limitSeconds = quizDetails.time_limit_minutes * 60;
+    const calculateTimeLeft = () => {
+      const elapsedSeconds = Math.floor((new Date().getTime() - new Date(activeAttempt.started_at).getTime()) / 1000);
+      const remaining = limitSeconds - elapsedSeconds;
+      return remaining > 0 ? remaining : 0;
+    };
+
+    // Initialize
+    setTimeLeft(calculateTimeLeft());
+
+    const interval = setInterval(() => {
+      const remaining = calculateTimeLeft();
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+        // Auto-submit when timer expires
+        setActionLoading(true);
+        const payload = Object.entries(selectedAnswers).flatMap(([qId, optIds]) =>
+          optIds.map(optId => ({
+            questionId: qId,
+            selectedOptionId: optId
+          }))
+        );
+        submitQuizAnswersAction(activeAttempt.id, payload).then((res) => {
+          if (res.attempt) {
+            setQuizSubmittedResult(res.attempt);
+            setActiveAttempt(null);
+            setSuccess("Time limit reached. Quiz automatically submitted.");
+            setTimeout(() => setSuccess(""), 4000);
+            refreshStudentData();
+          } else if (res.error) {
+            setError(res.error);
+            setActiveAttempt(null);
+          }
+          setActionLoading(false);
+        });
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [activeAttempt, quizDetails, selectedAnswers]);
 
   // Project interactive flows
   const handleEnterProject = async (activity: any) => {
@@ -1031,6 +1130,7 @@ export default function StudentConsole({
                     onClick={() => {
                       setSelectedQuizActivity(null);
                       setQuizDetails(null);
+                      setQuizQuestions([]);
                     }}
                     className="text-[#2563EB] hover:underline flex items-center gap-1 font-bold"
                   >
@@ -1041,40 +1141,68 @@ export default function StudentConsole({
                 </div>
 
                 {loading ? (
-                  <p className="text-slate-500 animate-pulse text-center py-8">Loading details...</p>
-                ) : quizDetails && (
+                  <p className="text-slate-500 animate-pulse text-center py-8">Loading quiz details...</p>
+                ) : (
                   <div className="space-y-6">
-                    {/* Active quiz configuration metadata */}
-                    {!activeAttempt && !quizSubmittedResult && (
-                      <div className="border border-[#E2E8F0] rounded-xl p-5 bg-slate-50/20 space-y-4">
-                        <h4 className="font-bold text-xs text-[#0f172a]">Quiz Instructions & Rules</h4>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-                          <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
-                            <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Time Limit</span>
-                            <span className="font-bold text-[#0F172A] text-xs">{quizDetails.time_limit_minutes ? `${quizDetails.time_limit_minutes} Mins` : "No limit"}</span>
-                          </div>
-                          <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
-                            <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Max Attempts</span>
-                            <span className="font-bold text-[#0F172A] text-xs">{quizDetails.max_attempts} attempts</span>
-                          </div>
-                          <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
-                            <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Questions Count</span>
-                            <span className="font-bold text-[#0F172A] text-xs">{quizQuestions.length} Questions</span>
-                          </div>
-                          <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
-                            <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Previous Status</span>
-                            <span className="font-bold text-[#0F172A] text-xs capitalize">{selectedQuizActivity.progress?.status_code}</span>
-                          </div>
-                        </div>
+                    {!activeAttempt && (
+                      (() => {
+                        const assignment = selectedQuizActivity.assignment;
+                        const now = new Date();
+                        const isNotOpenYet = assignment?.available_from ? new Date(assignment.available_from) > now : false;
+                        const isPastDue = assignment?.available_until ? new Date(assignment.available_until) < now : false;
 
-                        <button
-                          onClick={handleStartQuiz}
-                          disabled={actionLoading}
-                          className="bg-[#2563EB] text-white px-5 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all text-xs flex items-center gap-1.5 disabled:opacity-50"
-                        >
-                          <Play size={13} fill="white" /> Start Quiz Attempt
-                        </button>
-                      </div>
+                        return (
+                          <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
+                                <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Questions Count</span>
+                                <span className="font-bold text-[#0F172A] text-xs">{quizQuestions.length} Questions</span>
+                              </div>
+                              <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
+                                <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Attempts Done</span>
+                                <span className="font-bold text-[#0F172A] text-xs font-mono">{selectedQuizActivity.progress?.attempt_number || 0} / {quizDetails.max_attempts}</span>
+                              </div>
+                              {assignment?.available_from && (
+                                <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
+                                  <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Available From</span>
+                                  <span className="font-bold text-[#0F172A] text-[11px]">{new Date(assignment.available_from).toLocaleString()}</span>
+                                </div>
+                              )}
+                              {assignment?.available_until && (
+                                <div className="bg-white p-3 rounded-lg border border-[#e2e8f0]">
+                                  <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Due Date</span>
+                                  <span className={`font-bold text-[11px] ${isPastDue ? 'text-red-600' : 'text-[#0F172A]'}`}>{new Date(assignment.available_until).toLocaleString()}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {isNotOpenYet ? (
+                              <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3.5 text-xs font-semibold flex items-center gap-2">
+                                <AlertTriangle size={15} className="text-amber-600" />
+                                <span>This quiz is not available yet. It will open on {new Date(assignment.available_from).toLocaleString()}.</span>
+                              </div>
+                            ) : isPastDue ? (
+                              <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3.5 text-xs font-semibold flex items-center gap-2">
+                                <AlertTriangle size={15} className="text-red-600" />
+                                <span>The due date for this quiz has passed. You cannot start a new attempt.</span>
+                              </div>
+                            ) : (selectedQuizActivity.progress?.attempt_number || 0) >= quizDetails.max_attempts ? (
+                              <div className="bg-[#DC2626]/5 border border-[#DC2626]/20 text-[#DC2626] rounded-lg p-3.5 text-xs font-semibold flex items-center gap-2">
+                                <AlertTriangle size={15} />
+                                <span>You have reached the maximum allowed attempts limit for this quiz. Retakes are locked.</span>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={handleStartQuiz}
+                                disabled={actionLoading}
+                                className="bg-[#2563EB] text-white px-5 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all text-xs flex items-center gap-1.5 disabled:opacity-50 font-sans"
+                              >
+                                <Play size={13} fill="white" /> Start Quiz Attempt
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()
                     )}
 
                     {/* Quiz Questions List / Active Test screen */}
@@ -1082,7 +1210,13 @@ export default function StudentConsole({
                       <div className="space-y-6">
                         <div className="bg-[#2563EB]/5 border border-[#2563EB]/20 rounded-xl p-4 flex justify-between items-center">
                           <span className="font-semibold text-[#2563EB] text-[10px] uppercase tracking-wider">Attempt #{activeAttempt.attempt_number} in progress...</span>
-                          <span className="bg-white border border-[#2563EB]/30 px-3 py-1 rounded font-bold text-xs text-[#2563EB]">Time Started: {new Date(activeAttempt.started_at).toLocaleTimeString()}</span>
+                          {timeLeft !== null ? (
+                            <span className="bg-white border border-red-200 px-3 py-1.5 rounded font-mono font-bold text-xs text-red-600 flex items-center gap-1.5 animate-pulse">
+                              <Clock size={13} /> Time Left: {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                            </span>
+                          ) : (
+                            <span className="bg-white border border-[#2563EB]/30 px-3 py-1 rounded font-bold text-xs text-[#2563EB]">Time Started: {new Date(activeAttempt.started_at).toLocaleTimeString()}</span>
+                          )}
                         </div>
 
                         <div className="space-y-6">
@@ -1094,26 +1228,29 @@ export default function StudentConsole({
                               </h4>
 
                               <div className="grid grid-cols-1 gap-2.5">
-                                {q.options?.map((opt: any) => (
-                                  <label
-                                    key={opt.id}
-                                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-slate-50 transition-all ${
-                                      selectedAnswers[q.id] === opt.id
-                                        ? "border-[#2563EB] bg-[#2563EB]/5 font-semibold text-[#2563EB]"
-                                        : "border-[#E2E8F0] bg-white text-[#475569]"
-                                    }`}
-                                  >
-                                    <input
-                                      type="radio"
-                                      name={q.id}
-                                      value={opt.id}
-                                      checked={selectedAnswers[q.id] === opt.id}
-                                      onChange={() => handleOptionSelect(q.id, opt.id)}
-                                      className="accent-[#2563EB]"
-                                    />
-                                    <span>{opt.option_text}</span>
-                                  </label>
-                                ))}
+                                {q.options?.map((opt: any) => {
+                                  const isSelected = selectedAnswers[q.id]?.includes(opt.id) || false;
+                                  return (
+                                    <label
+                                      key={opt.id}
+                                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-slate-50 transition-all ${
+                                        isSelected
+                                          ? "border-[#2563EB] bg-[#2563EB]/5 font-semibold text-[#2563EB]"
+                                          : "border-[#E2E8F0] bg-white text-[#475569]"
+                                      }`}
+                                    >
+                                      <input
+                                        type={q.question_type === "multiple_choice" ? "checkbox" : "radio"}
+                                        name={q.id}
+                                        value={opt.id}
+                                        checked={isSelected}
+                                        onChange={() => handleOptionSelect(q.id, opt.id, q.question_type)}
+                                        className="accent-[#2563EB]"
+                                      />
+                                      <span>{opt.option_text}</span>
+                                    </label>
+                                  );
+                                })}
                               </div>
                             </div>
                           ))}
@@ -1128,32 +1265,36 @@ export default function StudentConsole({
                         </button>
                       </div>
                     )}
-
-                    {/* Result screen */}
                     {quizSubmittedResult && (
                       <div className="border border-[#16A34A]/20 bg-[#16A34A]/5 rounded-xl p-6 space-y-5 text-center">
                         <Award size={48} className="text-[#16A34A] mx-auto" />
                         <div>
                           <h4 className="font-bold text-sm text-[#0F172A]">Quiz Submitted Successfully!</h4>
-                          <p className="text-[#475569] text-xs mt-1">Your grading calculations have completed.</p>
+                          <p className="text-[#475569] text-xs mt-1">
+                            {quizDetails.show_results_immediately 
+                              ? "Your grading calculations have completed." 
+                              : "Your answers have been recorded. Grades will be released by the instructor."}
+                          </p>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-4 max-w-md mx-auto text-xs pt-2">
-                          <div className="bg-white p-3 border border-[#E2E8F0] rounded-xl">
-                            <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wider">Score</span>
-                            <span className="font-bold text-xs text-[#0F172A]">{quizSubmittedResult.score} / {quizSubmittedResult.max_score}</span>
+                        {quizDetails.show_results_immediately && (
+                          <div className="grid grid-cols-3 gap-4 max-w-md mx-auto text-xs pt-2">
+                            <div className="bg-white p-3 border border-[#E2E8F0] rounded-xl">
+                              <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wider">Score</span>
+                              <span className="font-bold text-xs text-[#0F172A]">{quizSubmittedResult.score} / {quizSubmittedResult.max_score}</span>
+                            </div>
+                            <div className="bg-white p-3 border border-[#E2E8F0] rounded-xl">
+                              <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wide">Passed</span>
+                              <span className={`font-bold text-xs uppercase ${quizSubmittedResult.passed ? "text-[#16A34A]" : "text-[#DC2626]"}`}>
+                                {quizSubmittedResult.passed ? "Yes" : "No"}
+                              </span>
+                            </div>
+                            <div className="bg-white p-3 border border-[#E2E8F0] rounded-xl">
+                              <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wider">Duration</span>
+                              <span className="font-bold text-xs text-[#0F172A]">{quizSubmittedResult.time_spent_seconds} Secs</span>
+                            </div>
                           </div>
-                          <div className="bg-white p-3 border border-[#E2E8F0] rounded-xl">
-                            <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wider">Passed</span>
-                            <span className={`font-bold text-xs uppercase ${quizSubmittedResult.passed ? "text-[#16A34A]" : "text-[#DC2626]"}`}>
-                              {quizSubmittedResult.passed ? "Yes" : "No"}
-                            </span>
-                          </div>
-                          <div className="bg-white p-3 border border-[#E2E8F0] rounded-xl">
-                            <span className="text-[9px] text-[#475569] font-bold block uppercase tracking-wider">Duration</span>
-                            <span className="font-bold text-xs text-[#0F172A]">{quizSubmittedResult.time_spent_seconds} Secs</span>
-                          </div>
-                        </div>
+                        )}
 
                         <button
                           onClick={() => {

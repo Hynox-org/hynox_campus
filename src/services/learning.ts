@@ -86,6 +86,138 @@ export async function getStudentAssignedActivities(studentId: string) {
 // ----------------------------------------------------
 // Quizzes Engine Operations
 // ----------------------------------------------------
+function seedRandom(seedStr: string) {
+  let h = 1779033703 ^ seedStr.length;
+  for (let i = 0; i < seedStr.length; i++) {
+    h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function() {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    return ((h ^= h >>> 16) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleArray<T>(array: T[], seedStr: string): T[] {
+  const rand = seedRandom(seedStr);
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+export async function getActiveQuizAttempt(quizId: string, studentId: string) {
+  const supabase = await createClient();
+  const { data: attempt, error } = await supabase
+    .schema("learning")
+    .from("quiz_attempts")
+    .select("*")
+    .eq("quiz_id", quizId)
+    .eq("student_id", studentId)
+    .is("submitted_at", null)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!attempt) return null;
+
+  // Verify time limit on active attempt. If expired, auto-submit empty answers to close it.
+  const { data: quiz } = await supabase
+    .schema("learning")
+    .from("quizzes")
+    .select("time_limit_minutes")
+    .eq("id", quizId)
+    .single();
+
+  if (quiz && quiz.time_limit_minutes) {
+    const elapsedSeconds = Math.floor((new Date().getTime() - new Date(attempt.started_at).getTime()) / 1000);
+    const limitSeconds = quiz.time_limit_minutes * 60;
+    if (elapsedSeconds > limitSeconds + 60) {
+      // Auto-submit to close the attempt as late
+      await submitQuizAnswers(attempt.id, []);
+      return null;
+    }
+  }
+
+  return attempt;
+}
+
+export async function getQuizSessionDetails(attemptId: string) {
+  const supabase = await createClient();
+
+  // 1. Fetch Attempt
+  const { data: attempt, error: attError } = await supabase
+    .schema("learning")
+    .from("quiz_attempts")
+    .select("*")
+    .eq("id", attemptId)
+    .single();
+
+  if (attError) throw attError;
+
+  // 2. Fetch Quiz
+  const { data: quiz, error: quizError } = await supabase
+    .schema("learning")
+    .from("quizzes")
+    .select("*")
+    .eq("id", attempt.quiz_id)
+    .single();
+
+  if (quizError) throw quizError;
+
+  // 3. Fetch Questions
+  const { data: questions, error: qError } = await supabase
+    .schema("learning")
+    .from("quiz_questions")
+    .select("*")
+    .eq("quiz_id", quiz.id)
+    .order("position", { ascending: true });
+
+  if (qError) throw qError;
+
+  const questionIds = (questions || []).map(q => q.id);
+  let options: any[] = [];
+
+  if (questionIds.length > 0) {
+    const { data: optData, error: optError } = await supabase
+      .schema("learning")
+      .from("quiz_options")
+      .select("id, question_id, option_text, position")
+      .in("question_id", questionIds)
+      .order("position", { ascending: true });
+
+    if (optError) throw optError;
+    options = optData || [];
+  }
+
+  // Map options to questions
+  let quizQuestionsList = (questions || []).map(q => ({
+    ...q,
+    options: options.filter(o => o.question_id === q.id)
+  }));
+
+  // Apply shuffling if configuration permits (seeded by attemptId)
+  if (quiz.shuffle_questions) {
+    quizQuestionsList = shuffleArray(quizQuestionsList, attemptId);
+  }
+  if (quiz.shuffle_options) {
+    quizQuestionsList = quizQuestionsList.map(q => ({
+      ...q,
+      options: shuffleArray(q.options, attemptId + q.id)
+    }));
+  }
+
+  return {
+    quiz,
+    attempt,
+    questions: quizQuestionsList
+  };
+}
+
 export async function getQuizDetails(activityId: string) {
   const supabase = await createClient();
 
@@ -135,16 +267,63 @@ export async function getQuizDetails(activityId: string) {
 export async function startQuizAttempt(quizId: string, studentId: string, progressId: string, attemptNumber: number = 1) {
   const supabase = await createClient();
 
+  // Enforce Max Attempts limit
+  const { data: quizObj, error: quizFetchError } = await supabase
+    .schema("learning")
+    .from("quizzes")
+    .select("activity_id, max_attempts")
+    .eq("id", quizId)
+    .single();
+
+  if (quizFetchError) throw quizFetchError;
+
+  // Enforce Availability Dates
+  const { data: enrollments } = await supabase
+    .schema("delivery")
+    .from("enrollments")
+    .select("cohort_id")
+    .eq("user_id", studentId)
+    .eq("status_code", "active")
+    .is("deleted_at", null);
+
+  if (enrollments && enrollments.length > 0) {
+    const cohortIds = enrollments.map(e => e.cohort_id);
+    const { data: assign } = await supabase
+      .schema("learning")
+      .from("activity_assignments")
+      .select("available_from, available_until")
+      .eq("activity_id", quizObj.activity_id)
+      .in("cohort_id", cohortIds)
+      .is("deleted_at", null)
+      .limit(1)
+      .maybeSingle();
+
+    if (assign) {
+      const now = new Date();
+      if (assign.available_from && new Date(assign.available_from) > now) {
+        throw new Error("This quiz is not available yet.");
+      }
+      if (assign.available_until && new Date(assign.available_until) < now) {
+        throw new Error("This quiz's due date has passed. You cannot start a new attempt.");
+      }
+    }
+  }
+
+  const { count, error: countError } = await supabase
+    .schema("learning")
+    .from("quiz_attempts")
+    .select("*", { count: "exact", head: true })
+    .eq("quiz_id", quizId)
+    .eq("student_id", studentId);
+
+  if (countError) throw countError;
+  if (count !== null && count >= (quizObj.max_attempts ?? 1)) {
+    throw new Error("Maximum attempts limit reached for this quiz.");
+  }
+
   // Create progress record if it doesn't exist
   let actualProgressId = progressId;
   if (!progressId || progressId === "new") {
-    const { data: quizObj } = await supabase
-      .schema("learning")
-      .from("quizzes")
-      .select("activity_id")
-      .eq("id", quizId)
-      .single();
-
     if (quizObj) {
       // Find assignment
       const { data: assign } = await supabase
@@ -190,7 +369,7 @@ export async function startQuizAttempt(quizId: string, studentId: string, progre
       quiz_id: quizId,
       student_id: studentId,
       student_activity_progress_id: actualProgressId,
-      attempt_number: attemptNumber,
+      attempt_number: (count || 0) + 1,
       started_at: new Date().toISOString()
     })
     .select()
@@ -220,9 +399,22 @@ export async function submitQuizAnswers(
   const { data: quiz } = await supabase
     .schema("learning")
     .from("quizzes")
-    .select("activity_id")
+    .select("activity_id, time_limit_minutes")
     .eq("id", attempt.quiz_id)
     .single();
+
+  if (attempt.submitted_at) {
+    throw new Error("This quiz attempt has already been submitted.");
+  }
+
+  const elapsedSeconds = Math.floor((new Date().getTime() - new Date(attempt.started_at).getTime()) / 1000);
+  if (quiz?.time_limit_minutes) {
+    const limitSeconds = quiz.time_limit_minutes * 60;
+    // Enforce time limit with a 60-second latency buffer. If it's a late submission with answers, reject it.
+    if (elapsedSeconds > limitSeconds + 60 && answers && answers.length > 0) {
+      throw new Error("Quiz time limit exceeded. Answers cannot be submitted.");
+    }
+  }
 
   const { data: questions } = await supabase
     .schema("learning")
@@ -241,42 +433,51 @@ export async function submitQuizAnswers(
 
   let totalScore = 0;
   let totalMaxScore = 0;
+  const answersToInsert: any[] = [];
 
-  const answersToInsert = answers.map(ans => {
-    const question = questions?.find(q => q.id === ans.questionId);
-    const correctOpts = correctOptions?.filter(o => o.question_id === ans.questionId) || [];
-    const maxPoints = Number(question?.points ?? 1);
+  for (const question of questions || []) {
+    const maxPoints = Number(question.points ?? 1);
     totalMaxScore += maxPoints;
 
+    const selections = answers.filter(ans => ans.questionId === question.id);
+    const correctOpts = correctOptions?.filter(o => o.question_id === question.id) || [];
+
     let isCorrect = false;
-    let pointsAwarded = 0;
+    if (question.question_type === "single_choice" || question.question_type === "true_false") {
+      const selectedOptId = selections[0]?.selectedOptionId;
+      isCorrect = selectedOptId ? correctOpts.some(o => o.id === selectedOptId) : false;
+    } else if (question.question_type === "multiple_choice") {
+      const selectedIds = selections.map(s => s.selectedOptionId).filter(Boolean) as string[];
+      const correctIds = correctOpts.map(c => c.id);
+      isCorrect = selectedIds.length === correctIds.length &&
+                  selectedIds.every(id => correctIds.includes(id));
+    }
 
-    if (question?.question_type === "single_choice" || question?.question_type === "true_false") {
-      isCorrect = correctOpts.some(o => o.id === ans.selectedOptionId);
-      pointsAwarded = isCorrect ? maxPoints : 0;
-    } else if (question?.question_type === "multiple_choice") {
-      // Simplistic check for single matched correct option for now, or match exactly
-      isCorrect = correctOpts.some(o => o.id === ans.selectedOptionId);
-      pointsAwarded = isCorrect ? maxPoints : 0;
+    const pointsAwarded = isCorrect ? maxPoints : 0;
+    totalScore += pointsAwarded;
+
+    if (selections.length === 0) {
+      answersToInsert.push({
+        attempt_id: attemptId,
+        question_id: question.id,
+        selected_option_id: null,
+        answer_text: null,
+        is_correct: false,
+        points_awarded: 0
+      });
     } else {
-      // short_answer
-      isCorrect = false;
-      pointsAwarded = 0;
+      selections.forEach((sel, index) => {
+        answersToInsert.push({
+          attempt_id: attemptId,
+          question_id: question.id,
+          selected_option_id: sel.selectedOptionId || null,
+          answer_text: sel.answerText || null,
+          is_correct: isCorrect,
+          points_awarded: index === 0 ? pointsAwarded : 0
+        });
+      });
     }
-
-    if (isCorrect) {
-      totalScore += pointsAwarded;
-    }
-
-    return {
-      attempt_id: attemptId,
-      question_id: ans.questionId,
-      selected_option_id: ans.selectedOptionId || null,
-      answer_text: ans.answerText || null,
-      is_correct: isCorrect,
-      points_awarded: pointsAwarded
-    };
-  });
+  }
 
   // 3. Insert Answers
   if (answersToInsert.length > 0) {
@@ -839,6 +1040,7 @@ export async function createActivityAndSubclass(input: {
   quiz_max_attempts?: number;
   quiz_shuffle_questions?: boolean;
   quiz_shuffle_options?: boolean;
+  quiz_show_results_immediately?: boolean;
   
   project_overview?: string;
   project_requirements?: string;
@@ -891,7 +1093,8 @@ export async function createActivityAndSubclass(input: {
         time_limit_minutes: input.quiz_time_limit || null,
         max_attempts: input.quiz_max_attempts ?? 1,
         shuffle_questions: input.quiz_shuffle_questions ?? false,
-        shuffle_options: input.quiz_shuffle_options ?? false
+        shuffle_options: input.quiz_shuffle_options ?? false,
+        show_results_immediately: input.quiz_show_results_immediately ?? true
       });
     if (subError) throw subError;
   } else if (input.activity_type_code === "project") {

@@ -205,3 +205,21 @@ export async function assignActivityToCohortAction(input: any) {
   }
 }
 
+export async function getActiveQuizAttemptAction(quizId: string, studentId: string) {
+  try {
+    const attempt = await service.getActiveQuizAttempt(quizId, studentId);
+    return { attempt };
+  } catch (error: any) {
+    return { error: error.message || "Failed to check active attempt." };
+  }
+}
+
+export async function getQuizSessionDetailsAction(attemptId: string) {
+  try {
+    const data = await service.getQuizSessionDetails(attemptId);
+    return data;
+  } catch (error: any) {
+    return { error: error.message || "Failed to retrieve quiz session details." };
+  }
+}
+
