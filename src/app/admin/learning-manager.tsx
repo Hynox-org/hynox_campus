@@ -5,7 +5,9 @@ import {
   listProgramsAction,
   listCoursesAction,
   listModulesAction,
-  listLessonsAction
+  listLessonsAction,
+  listTenantCoursesAction,
+  listLessonsForCourseAction
 } from "@/app/actions/academic-actions";
 import { listCohortsAction } from "@/app/actions/delivery-actions";
 import {
@@ -32,10 +34,12 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
   const [programs, setPrograms] = useState<any[]>([]);
   const [selectedProgId, setSelectedProgId] = useState("");
   const [courses, setCourses] = useState<any[]>([]);
+  const [allTenantCourses, setAllTenantCourses] = useState<any[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [modules, setModules] = useState<any[]>([]);
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const [lessons, setLessons] = useState<any[]>([]);
+  const [allCourseLessons, setAllCourseLessons] = useState<any[]>([]);
   const [selectedLessonId, setSelectedLessonId] = useState("");
   const [cohorts, setCohorts] = useState<any[]>([]);
   
@@ -119,36 +123,48 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
   useEffect(() => {
     if (!selectedInstId) {
       setPrograms([]);
+      setCourses([]);
+      setAllTenantCourses([]);
       return;
     }
     listProgramsAction(selectedInstId).then(res => setPrograms(res.programs || []));
+    listTenantCoursesAction(selectedInstId).then(res => {
+      setCourses(res.courses || []);
+      setAllTenantCourses(res.courses || []);
+    });
     listCohortsAction(selectedInstId).then(res => setCohorts(res.cohorts || []));
     loadActivitiesList(selectedInstId);
   }, [selectedInstId]);
 
   useEffect(() => {
     if (!selectedProgId) {
-      setCourses([]);
+      setCourses(allTenantCourses);
       return;
     }
     listCoursesAction(selectedProgId).then(res => setCourses(res.courses || []));
-  }, [selectedProgId]);
+  }, [selectedProgId, allTenantCourses]);
 
   useEffect(() => {
     if (!selectedCourseId) {
       setModules([]);
+      setLessons([]);
+      setAllCourseLessons([]);
       return;
     }
     listModulesAction(selectedCourseId).then(res => setModules(res.modules || []));
+    listLessonsForCourseAction(selectedCourseId).then(res => {
+      setLessons(res.lessons || []);
+      setAllCourseLessons(res.lessons || []);
+    });
   }, [selectedCourseId]);
 
   useEffect(() => {
     if (!selectedModuleId) {
-      setLessons([]);
+      setLessons(allCourseLessons);
       return;
     }
     listLessonsAction(selectedModuleId).then(res => setLessons(res.lessons || []));
-  }, [selectedModuleId]);
+  }, [selectedModuleId, allCourseLessons]);
 
   const handleCreateActivityBase = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -403,27 +419,26 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
                 </select>
               </div>
 
-              {selectedProgId && (
-                <div>
-                  <label className="block font-semibold text-[#475569] mb-1">Course</label>
-                  <select
-                    value={selectedCourseId}
-                    onChange={(e) => {
-                      setSelectedCourseId(e.target.value);
-                      setSelectedModuleId("");
-                      setSelectedLessonId("");
-                    }}
-                    className="w-full bg-slate-50 border border-[#E2E8F0] rounded-lg px-2.5 py-1.5 text-xs outline-none"
-                  >
-                    <option value="">-- Select Course --</option>
-                    {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
-                  </select>
-                </div>
-              )}
+              <div>
+                <label className="block font-semibold text-[#475569] mb-1">Course *</label>
+                <select
+                  value={selectedCourseId}
+                  onChange={(e) => {
+                    setSelectedCourseId(e.target.value);
+                    setSelectedModuleId("");
+                    setSelectedLessonId("");
+                  }}
+                  className="w-full bg-slate-50 border border-[#E2E8F0] rounded-lg px-2.5 py-1.5 text-xs outline-none"
+                  required
+                >
+                  <option value="">-- Select Course --</option>
+                  {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                </select>
+              </div>
 
               {selectedCourseId && (
                 <div>
-                  <label className="block font-semibold text-[#475569] mb-1">Module</label>
+                  <label className="block font-semibold text-[#475569] mb-1">Module (Optional)</label>
                   <select
                     value={selectedModuleId}
                     onChange={(e) => {
@@ -438,13 +453,14 @@ export default function LearningManager({ institutions }: LearningManagerProps) 
                 </div>
               )}
 
-              {selectedModuleId && (
+              {selectedCourseId && (
                 <div>
-                  <label className="block font-semibold text-[#475569] mb-1">Lesson Target</label>
+                  <label className="block font-semibold text-[#475569] mb-1">Lesson Target *</label>
                   <select
                     value={selectedLessonId}
                     onChange={(e) => setSelectedLessonId(e.target.value)}
                     className="w-full bg-slate-50 border border-[#E2E8F0] rounded-lg px-2.5 py-1.5 text-xs outline-none"
+                    required
                   >
                     <option value="">-- Select Lesson --</option>
                     {lessons.map(l => <option key={l.id} value={l.id}>{l.title}</option>)}

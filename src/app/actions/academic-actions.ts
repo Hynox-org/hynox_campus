@@ -258,5 +258,28 @@ export async function getAcademicLookupsAction() {
   }
 }
 
+export async function listTenantCoursesAction(tenantId: string) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) throw new Error("Unauthorized.");
+    const data = await academicService.listTenantCourses(tenantId);
+    return { success: true, courses: data };
+  } catch (error: any) {
+    return { error: error.message || "Failed to list tenant courses." };
+  }
+}
+
+export async function listLessonsForCourseAction(courseId: string) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) throw new Error("Unauthorized.");
+    const data = await academicService.listLessonsForCourse(courseId);
+    return { success: true, lessons: data };
+  } catch (error: any) {
+    return { error: error.message || "Failed to list lessons for course." };
+  }
+}
+
+
 
 

@@ -773,3 +773,53 @@ export async function getCourseBySlug(slug: string, tenantId: string) {
   return data;
 }
 
+export async function listTenantCourses(tenantId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema("academic")
+    .from("courses")
+    .select(`
+      *,
+      course_type:course_type_id(code, description),
+      status:status_id(code, description),
+      visibility:visibility_type_id(code, description)
+    `)
+    .eq("tenant_id", tenantId)
+    .is("deleted_at", null)
+    .order("title");
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function listLessonsForCourse(courseId: string) {
+  const supabase = await createClient();
+  const { data: modules, error: modError } = await supabase
+    .schema("academic")
+    .from("modules")
+    .select("id")
+    .eq("course_id", courseId)
+    .is("deleted_at", null);
+
+  if (modError) throw modError;
+  if (!modules || modules.length === 0) return [];
+
+  const moduleIds = modules.map(m => m.id);
+
+  const { data: lessons, error: lesError } = await supabase
+    .schema("academic")
+    .from("lessons")
+    .select(`
+      *,
+      lesson_type:lesson_type_id(code, description),
+      status:status_id(code, description)
+    `)
+    .in("module_id", moduleIds)
+    .is("deleted_at", null)
+    .order("position", { ascending: true });
+
+  if (lesError) throw lesError;
+  return lessons || [];
+}
+
+

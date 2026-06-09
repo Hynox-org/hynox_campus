@@ -132,6 +132,7 @@ export async function getChallengeSubmissionResultsAction(submissionId: string) 
   }
 }
 
+// Server action to list all activities for a tenant (force recompilation refresh)
 export async function listAllActivitiesAction(tenantId: string) {
   try {
     const activities = await service.listAllActivities(tenantId);
@@ -222,4 +223,39 @@ export async function getQuizSessionDetailsAction(attemptId: string) {
     return { error: error.message || "Failed to retrieve quiz session details." };
   }
 }
+
+export async function listProjectSubmissionsAction(tenantId: string) {
+  try {
+    const submissions = await service.listProjectSubmissions(tenantId);
+    return { submissions };
+  } catch (error: any) {
+    return { error: error.message || "Failed to load project submissions." };
+  }
+}
+
+export async function reviewProjectSubmissionAction(input: {
+  submissionId: string;
+  reviewerId: string;
+  status: string;
+  score: number;
+  feedback: string;
+}) {
+  try {
+    const review = await service.reviewProjectSubmission(input);
+    revalidatePath("/teacher");
+    return { review };
+  } catch (error: any) {
+    return { error: error.message || "Failed to submit project review." };
+  }
+}
+
+export async function listChallengeSubmissionsAction(tenantId: string) {
+  try {
+    const submissions = await service.listChallengeSubmissions(tenantId);
+    return { submissions };
+  } catch (error: any) {
+    return { error: error.message || "Failed to load challenge submissions." };
+  }
+}
+
 

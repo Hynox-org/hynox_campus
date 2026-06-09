@@ -4,7 +4,8 @@ import { getCurrentUser } from "@/services/auth";
 import { 
   createInstitution, 
   assignInstitutionAdmin,
-  listInstitutionUsers
+  listInstitutionUsers,
+  listTeacherInstitutions
 } from "@/services/institution";
 import { 
   processCsvOnboarding,
@@ -214,6 +215,15 @@ export async function onboardSingleUserAction(params: {
     return { error: error.message || "Failed to onboard user." };
   }
 }
+export async function listTeacherInstitutionsAction(userId: string) {
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails) return { error: "Unauthorized." };
 
-
-
+    const isSuperAdmin = userDetails.primaryRole === "super_admin";
+    const data = await listTeacherInstitutions(userId, isSuperAdmin);
+    return { success: true, institutions: data };
+  } catch (error: any) {
+    return { error: error.message || "Failed to list teacher institutions." };
+  }
+}

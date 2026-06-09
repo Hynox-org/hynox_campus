@@ -181,3 +181,35 @@ export async function listInstitutionUsers(institutionId: string) {
   });
 }
 
+export async function listTeacherInstitutions(userId: string, isSuperAdmin: boolean) {
+  const supabase = await createClient();
+
+  if (isSuperAdmin) {
+    return listInstitutions();
+  }
+
+  const { data: assignments, error: assignError } = await supabase
+    .schema("academic")
+    .from("course_instructors")
+    .select("tenant_id")
+    .eq("user_id", userId);
+
+  if (assignError) throw assignError;
+  if (!assignments || assignments.length === 0) return [];
+
+  const tenantIds = [...new Set(assignments.map(a => a.tenant_id).filter(Boolean))];
+
+  if (tenantIds.length === 0) return [];
+
+  const { data: insts, error: instError } = await supabase
+    .schema("institution")
+    .from("institutions")
+    .select("*")
+    .in("id", tenantIds)
+    .order("name");
+
+  if (instError) throw instError;
+  return insts || [];
+}
+
+

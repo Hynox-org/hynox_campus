@@ -1253,3 +1253,192 @@ export async function assignActivityToCohort(input: {
   if (error) throw error;
   return data;
 }
+
+// ----------------------------------------------------
+// Teacher Dashboard Operations
+// ----------------------------------------------------
+export async function listProjectSubmissions(tenantId: string) {
+  const supabase = await createClient();
+
+  const { data: projects, error: projError } = await supabase
+    .schema("learning")
+    .from("projects")
+    .select(`
+      id,
+      activity_id,
+      max_score,
+      activities!inner (
+        id,
+        title,
+        tenant_id
+      )
+    `)
+    .eq("activities.tenant_id", tenantId);
+
+  if (projError) throw projError;
+  if (!projects || projects.length === 0) return [];
+
+  const projectIds = projects.map(p => p.id);
+
+  const { data: submissions, error: subError } = await supabase
+    .schema("learning")
+    .from("project_submissions")
+    .select("*")
+    .in("project_id", projectIds)
+    .order("submitted_at", { ascending: false });
+
+  if (subError) throw subError;
+  if (!submissions || submissions.length === 0) return [];
+
+  const submissionIds = submissions.map(s => s.id);
+  const { data: reviews } = await supabase
+    .schema("learning")
+    .from("project_reviews")
+    .select("*")
+    .in("submission_id", submissionIds);
+
+  const studentIds = [...new Set(submissions.map(s => s.student_id))];
+  const { data: students } = await supabase
+    .schema("core")
+    .from("users")
+    .select("id, full_name, email")
+    .in("id", studentIds);
+
+  return submissions.map(sub => {
+    const project: any = projects.find(p => p.id === sub.project_id);
+    const review = reviews?.find(r => r.submission_id === sub.id) || null;
+    const student = students?.find(s => s.id === sub.student_id) || null;
+
+    return {
+      ...sub,
+      project_title: project?.activities?.title || "Unknown Project",
+      max_score: Number(project?.max_score || 100),
+      student,
+      review
+    };
+  });
+}
+
+export async function reviewProjectSubmission(input: {
+  submissionId: string;
+  reviewerId: string;
+  status: string;
+  score: number;
+  feedback: string;
+}) {
+  const supabase = await createClient();
+
+  const { data: submission, error: subError } = await supabase
+    .schema("learning")
+    .from("project_submissions")
+    .select("*")
+    .eq("id", input.submissionId)
+    .single();
+
+  if (subError || !submission) throw new Error("Project submission not found.");
+
+  const { data: review, error: revError } = await supabase
+    .schema("learning")
+    .from("project_reviews")
+    .upsert({
+      submission_id: input.submissionId,
+      reviewed_by: input.reviewerId,
+      score: input.score,
+      feedback: input.feedback,
+      review_status: input.status,
+      reviewed_at: new Date().toISOString()
+    }, { onConflict: "submission_id" })
+    .select()
+    .single();
+
+  if (revError) throw revError;
+
+  let progressStatus = "review_pending";
+  if (input.status === "approved") {
+    progressStatus = "completed";
+  } else if (input.status === "revision_requested") {
+    progressStatus = "started";
+  } else if (input.status === "rejected") {
+    progressStatus = "failed";
+  }
+
+  const { error: progError } = await supabase
+    .schema("learning")
+    .from("student_activity_progress")
+    .update({
+      status_code: progressStatus,
+      score: input.score,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: input.reviewerId,
+      feedback: input.feedback,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", submission.student_activity_progress_id);
+
+  if (progError) throw progError;
+
+  return review;
+}
+
+export async function listChallengeSubmissions(tenantId: string) {
+  const supabase = await createClient();
+
+  const { data: challenges, error: chalError } = await supabase
+    .schema("learning")
+    .from("programming_challenges")
+    .select(`
+      id,
+      activity_id,
+      activities!inner (
+        id,
+        title,
+        tenant_id,
+        max_score
+      )
+    `)
+    .eq("activities.tenant_id", tenantId);
+
+  if (chalError) throw chalError;
+  if (!challenges || challenges.length === 0) return [];
+
+  const challengeIds = challenges.map(c => c.id);
+
+  const { data: submissions, error: subError } = await supabase
+    .schema("learning")
+    .from("challenge_submissions")
+    .select("*")
+    .in("challenge_id", challengeIds)
+    .order("submitted_at", { ascending: false });
+
+  if (subError) throw subError;
+  if (!submissions || submissions.length === 0) return [];
+
+  const submissionIds = submissions.map(s => s.id);
+  const { data: results } = await supabase
+    .schema("learning")
+    .from("challenge_submission_results")
+    .select("*")
+    .in("submission_id", submissionIds);
+
+  const studentIds = [...new Set(submissions.map(s => s.student_id))];
+  const { data: students } = await supabase
+    .schema("core")
+    .from("users")
+    .select("id, full_name, email")
+    .in("id", studentIds);
+
+  return submissions.map(sub => {
+    const challenge: any = challenges.find(c => c.id === sub.challenge_id);
+    const result = results?.find(r => r.submission_id === sub.id) || null;
+    const student = students?.find(s => s.id === sub.student_id) || null;
+
+    return {
+      ...sub,
+      challenge_title: challenge?.activities?.title || "Unknown Challenge",
+      max_score: Number(challenge?.activities?.max_score || 100),
+      student,
+      result
+    };
+  });
+}
+

@@ -5,6 +5,8 @@ import { signOutAction } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
 import { Terminal, LogOut } from "lucide-react";
 import InstitutionPanel from "./institution-panel";
+import { listCohorts, listEnrollments } from "@/services/delivery";
+import { listProjectSubmissions, listChallengeSubmissions } from "@/services/learning";
 
 export const dynamic = "force-dynamic";
 
@@ -21,42 +23,52 @@ export default async function InstitutionAdminPage() {
     redirect("/login");
   }
 
-  // Load scoped invitations for this institution
+  // Load scoped invitations, cohorts, enrollments, programs, instructors, and submissions in parallel
   let invitations: any[] = [];
-  try {
-    const allInvitations = await listOnboardingInvitations();
-    invitations = allInvitations.filter((inv: any) => inv.tenant_id === tenantId);
-  } catch (error) {
-    console.error("Failed to load invitations:", error);
-  }
-
-  // Load programs under this institution
+  let cohorts: any[] = [];
+  let enrollments: any[] = [];
   let programs: any[] = [];
-  try {
-    programs = await listPrograms(tenantId);
-  } catch (error) {
-    console.error("Failed to load programs:", error);
-  }
-
-  // Load active instructors on this institution
   let instructors: any[] = [];
-  try {
-    instructors = await listTenantInstructors(tenantId);
-  } catch (error) {
-    console.error("Failed to load instructors:", error);
-  }
-
-  // Load lookups
+  let projectSubmissions: any[] = [];
+  let challengeSubmissions: any[] = [];
   let lookups: any = {
     courseTypes: [],
     lessonTypes: [],
     statuses: [],
     visibilityTypes: []
   };
+
   try {
-    lookups = await getAcademicLookups();
+    const [
+      allInvitations,
+      cohortsRes,
+      enrollmentsRes,
+      programsRes,
+      instructorsRes,
+      projectSubmissionsRes,
+      challengeSubmissionsRes,
+      lookupsRes
+    ] = await Promise.all([
+      listOnboardingInvitations(),
+      listCohorts(tenantId),
+      listEnrollments(tenantId),
+      listPrograms(tenantId),
+      listTenantInstructors(tenantId),
+      listProjectSubmissions(tenantId),
+      listChallengeSubmissions(tenantId),
+      getAcademicLookups()
+    ]);
+
+    invitations = (allInvitations || []).filter((inv: any) => inv.tenant_id === tenantId);
+    cohorts = cohortsRes || [];
+    enrollments = enrollmentsRes || [];
+    programs = programsRes || [];
+    instructors = instructorsRes || [];
+    projectSubmissions = projectSubmissionsRes || [];
+    challengeSubmissions = challengeSubmissionsRes || [];
+    lookups = lookupsRes || lookups;
   } catch (error) {
-    console.error("Failed to load lookups:", error);
+    console.error("Failed to load institution admin page datasets:", error);
   }
 
   return (
@@ -101,6 +113,10 @@ export default async function InstitutionAdminPage() {
           initialInvitations={invitations}
           initialPrograms={programs}
           initialInstructors={instructors}
+          initialCohorts={cohorts}
+          initialEnrollments={enrollments}
+          initialProjectSubmissions={projectSubmissions}
+          initialChallengeSubmissions={challengeSubmissions}
           lookups={lookups}
         />
       </main>

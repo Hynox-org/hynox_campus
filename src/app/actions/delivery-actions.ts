@@ -8,12 +8,13 @@ import { listInstitutionUsers } from "@/services/institution";
 async function verifyAdmin() {
   const user = await getCurrentUser();
   if (!user) throw new Error("Unauthorized.");
-  const allowed = ["super_admin", "institution_admin"];
+  const allowed = ["super_admin", "institution_admin", "teacher", "trainer"];
   if (!allowed.includes(user.primaryRole)) {
     throw new Error("Access denied. Insufficient permissions.");
   }
   return user;
 }
+
 
 export async function getDeliveryLookupsAction() {
   try {

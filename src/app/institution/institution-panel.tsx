@@ -65,6 +65,10 @@ import {
   ExternalLink,
   File,
   Link2,
+  CheckSquare,
+  Code2,
+  Activity,
+  Award,
   Video,
   ChevronDown,
   ChevronRight,
@@ -79,6 +83,10 @@ interface InstitutionPanelProps {
   initialInvitations: any[];
   initialPrograms: any[];
   initialInstructors: any[];
+  initialCohorts: any[];
+  initialEnrollments: any[];
+  initialProjectSubmissions: any[];
+  initialChallengeSubmissions: any[];
   lookups: any;
 }
 
@@ -88,10 +96,18 @@ export default function InstitutionPanel({
   initialInvitations, 
   initialPrograms,
   initialInstructors,
+  initialCohorts,
+  initialEnrollments,
+  initialProjectSubmissions,
+  initialChallengeSubmissions,
   lookups 
 }: InstitutionPanelProps) {
   const [activeTab, setActiveTab] = useState<"overview" | "academics" | "onboarding" | "explorer">("overview");
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
+  const [cohorts, setCohorts] = useState<any[]>(initialCohorts || []);
+  const [enrollments, setEnrollments] = useState<any[]>(initialEnrollments || []);
+  const [projectSubmissions, setProjectSubmissions] = useState<any[]>(initialProjectSubmissions || []);
+  const [challengeSubmissions, setChallengeSubmissions] = useState<any[]>(initialChallengeSubmissions || []);
   const [inviteSearch, setInviteSearch] = useState("");
   const [inviteFilter, setInviteFilter] = useState<"all" | "pending" | "accepted" | "expired" | "failed" | "revoked">("all");
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
@@ -808,36 +824,175 @@ export default function InstitutionPanel({
         {/* TAB 1: OVERVIEW */}
         {activeTab === "overview" && (
           <div className="space-y-6 animate-fade-in">
-            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="bg-[#16A34A]/10 text-[#16A34A] p-2.5 rounded-xl border border-[#16A34A]/20">
-                  <Building size={20} />
+            {/* Stats Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white border border-[#E2E8F0] p-6 rounded-2xl shadow-sm">
+                <div className="flex justify-between items-start mb-4">
+                  <span className="text-xs font-bold text-[#475569] uppercase tracking-wider">Total Cohorts</span>
+                  <div className="p-2 bg-[#2563EB]/10 text-[#2563EB] rounded-xl"><Folder size={18} /></div>
                 </div>
-                <div>
-                  <h2 className="text-base font-bold text-[#0F172A]">Institution Administration Hub</h2>
-                  <p className="text-xs text-[#475569]">Tenant management console</p>
-                </div>
+                <h2 className="text-2xl font-bold text-[#0F172A]">{cohorts.length}</h2>
+                <p className="text-[10px] text-[#475569] mt-1">Managed educational cohorts</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-5">
-                <div>
-                  <span className="text-[10px] font-bold text-[#475569] block uppercase tracking-wide">Admin Email</span>
-                  <span className="font-semibold text-[#0F172A]">{adminEmail}</span>
+              <div className="bg-white border border-[#E2E8F0] p-6 rounded-2xl shadow-sm">
+                <div className="flex justify-between items-start mb-4">
+                  <span className="text-xs font-bold text-[#475569] uppercase tracking-wider">Enrolled Students</span>
+                  <div className="p-2 bg-[#16A34A]/10 text-[#16A34A] rounded-xl"><Users size={18} /></div>
                 </div>
-                <div>
-                  <span className="text-[10px] font-bold text-[#475569] block uppercase tracking-wide">Institution Code</span>
-                  <span className="font-semibold text-[#0F172A]">{institution.institution_code}</span>
-                </div>
-                <div className="md:col-span-2 border-t border-[#E2E8F0] pt-3 mt-1">
-                  <span className="text-[10px] font-bold text-[#475569] block uppercase tracking-wide">Campus Domain / Website</span>
-                  <span className="font-semibold text-[#0F172A]">{institution.website || "No site linked"}</span>
-                </div>
+                <h2 className="text-2xl font-bold text-[#0F172A]">{enrollments.length}</h2>
+                <p className="text-[10px] text-[#475569] mt-1">Active class consumers</p>
               </div>
 
-              <div className="border border-dashed border-[#E2E8F0] rounded-xl p-6 text-center text-xs text-[#475569]">
-                <Users className="mx-auto mb-2 text-[#475569]/60" size={30} />
-                <p className="font-medium text-[#0F172A]">Institution Leaderboards & Faculty Registry</p>
-                <p className="mt-1">Use the sidebar links to manage active curriculum structures, map instructors, or onboard student cohorts.</p>
+              <div className="bg-white border border-[#E2E8F0] p-6 rounded-2xl shadow-sm">
+                <div className="flex justify-between items-start mb-4">
+                  <span className="text-xs font-bold text-[#475569] uppercase tracking-wider">Approved Projects</span>
+                  <div className="p-2 bg-[#F59E0B]/10 text-[#F59E0B] rounded-xl"><CheckSquare size={18} /></div>
+                </div>
+                <h2 className="text-2xl font-bold text-[#0F172A]">
+                  {projectSubmissions.filter(p => p.review?.review_status === "approved").length}
+                </h2>
+                <p className="text-[10px] text-[#475569] mt-1">Verified student projects</p>
+              </div>
+
+              <div className="bg-white border border-[#E2E8F0] p-6 rounded-2xl shadow-sm">
+                <div className="flex justify-between items-start mb-4">
+                  <span className="text-xs font-bold text-[#475569] uppercase tracking-wider">Challenge Runs</span>
+                  <div className="p-2 bg-[#06B6D4]/10 text-[#06B6D4] rounded-xl"><Code2 size={18} /></div>
+                </div>
+                <h2 className="text-2xl font-bold text-[#0F172A]">{challengeSubmissions.length}</h2>
+                <p className="text-[10px] text-[#475569] mt-1">Lab code validations run</p>
+              </div>
+            </div>
+
+            {/* Main Overview Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Student Performance Leaderboard */}
+              <div className="lg:col-span-2 bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-sm space-y-4">
+                <div className="flex justify-between items-center border-b border-[#E2E8F0] pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-1.5">
+                      <Award size={16} className="text-[#2563EB]" /> Student Performance Directory
+                    </h3>
+                    <p className="text-[10px] text-[#475569] mt-0.5">Tracking student deliverables and lab runs</p>
+                  </div>
+                </div>
+
+                {enrollments.length === 0 ? (
+                  <p className="text-xs text-[#475569] text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl">
+                    No student performance records found yet.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-[#E2E8F0] text-[#475569]">
+                          <th className="py-2.5 font-bold uppercase">Rank</th>
+                          <th className="py-2.5 font-bold uppercase">Student</th>
+                          <th className="py-2.5 font-bold uppercase">Cohort</th>
+                          <th className="py-2.5 font-bold uppercase text-center">Projects</th>
+                          <th className="py-2.5 font-bold uppercase text-center">Lab Challenges</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E2E8F0]">
+                        {enrollments.map((enr, idx) => {
+                          const studentProjCount = projectSubmissions.filter(p => p.student_id === enr.student_id).length;
+                          const studentProjApproved = projectSubmissions.filter(p => p.student_id === enr.student_id && p.review?.review_status === "approved").length;
+                          const studentChalCount = challengeSubmissions.filter(c => c.student_id === enr.student_id).length;
+                          const cohortName = cohorts.find(c => c.id === enr.cohort_id)?.name || "Unknown";
+
+                          return (
+                            <tr key={enr.id} className="hover:bg-slate-50/50">
+                              <td className="py-3 font-semibold text-slate-500">#{idx + 1}</td>
+                              <td className="py-3 font-bold text-[#0F172A]">
+                                <div>{enr.user?.full_name || "New Student"}</div>
+                                <div className="text-[10px] text-[#475569] font-normal">{enr.user?.email}</div>
+                              </td>
+                              <td className="py-3 font-medium text-[#475569]">{cohortName}</td>
+                              <td className="py-3 text-center">
+                                <span className="px-2 py-0.5 bg-[#16A34A]/10 text-[#16A34A] rounded text-[10px] font-bold">
+                                  {studentProjApproved} / {studentProjCount} Approved
+                                </span>
+                              </td>
+                              <td className="py-3 text-center">
+                                <span className="px-2 py-0.5 bg-[#2563EB]/10 text-[#2563EB] rounded text-[10px] font-bold">
+                                  {studentChalCount} Completed
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Sidebar: Cohorts & Live Feed */}
+              <div className="space-y-6">
+                {/* Cohorts Progress List */}
+                <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-sm space-y-4">
+                  <h3 className="text-xs font-bold text-[#0F172A] uppercase pb-2 border-b border-[#E2E8F0] flex items-center gap-1.5">
+                    <Activity size={14} className="text-[#2563EB]" /> active cohorts
+                  </h3>
+                  {cohorts.length === 0 ? (
+                    <p className="text-xs text-[#475569] text-center py-6">No academic cohorts created yet.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {cohorts.map(coh => {
+                        const studCount = enrollments.filter(e => e.cohort_id === coh.id).length;
+                        return (
+                          <div key={coh.id} className="p-3 bg-slate-50 border border-[#E2E8F0] rounded-xl text-[10px] flex justify-between items-center">
+                            <div>
+                              <span className="font-bold text-[#0F172A] block">{coh.name}</span>
+                              <span className="text-[#475569] font-mono">{coh.code}</span>
+                            </div>
+                            <span className="bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20 px-2 py-0.5 rounded-full font-bold">
+                              {studCount} Students
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent submissions feed */}
+                <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-sm space-y-4">
+                  <h3 className="text-xs font-bold text-[#0F172A] uppercase pb-2 border-b border-[#E2E8F0] flex items-center gap-1.5">
+                    <Clock size={14} className="text-[#2563EB]" /> recent submissions
+                  </h3>
+                  
+                  {projectSubmissions.length === 0 && challengeSubmissions.length === 0 ? (
+                    <p className="text-xs text-[#475569] text-center py-6">No recent learning actions recorded.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {projectSubmissions.slice(0, 3).map(sub => (
+                        <div key={sub.id} className="p-2.5 border border-[#E2E8F0] rounded-xl text-[10px] space-y-1">
+                          <div className="flex justify-between font-bold text-[#0F172A]">
+                            <span className="truncate">{sub.project_title}</span>
+                            <span className="text-[#F59E0B] capitalize shrink-0 font-medium">{sub.review?.review_status || "pending"}</span>
+                          </div>
+                          <p className="text-[#475569]">
+                            Project submitted by <strong className="text-[#0F172A]">{sub.student?.full_name || "Student"}</strong>
+                          </p>
+                        </div>
+                      ))}
+
+                      {challengeSubmissions.slice(0, 3).map(sub => (
+                        <div key={sub.id} className="p-2.5 border border-[#E2E8F0] rounded-xl text-[10px] space-y-1">
+                          <div className="flex justify-between font-bold text-[#0F172A]">
+                            <span className="truncate">{sub.challenge_title}</span>
+                            <span className="text-[#2563EB] shrink-0 font-medium">completed</span>
+                          </div>
+                          <p className="text-[#475569]">
+                            Challenge run by <strong className="text-[#0F172A]">{sub.student?.full_name || "Student"}</strong>
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
