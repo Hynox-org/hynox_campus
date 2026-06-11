@@ -1,7 +1,15 @@
-import { spawnSync } from "child_process";
+import * as childProcess from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { getVisibleTestCases, getAllTestCasesInternal } from "./learning";
+import { cookies } from "next/headers";
+import { createServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
+
+function safeSpawnSync(cmd: string, args: string[], options: any) {
+  const key = "spawnSync";
+  return childProcess[key](cmd, args, options);
+}
 
 // Directory to store temporary files for code execution (resolved dynamically to bypass Turbopack static tracing)
 function getTempDir() {
@@ -17,14 +25,21 @@ function ensureTempDir() {
   }
 }
 
-// Dynamically resolve Supabase client based on environment (Next.js server context vs standalone background worker process)
+// Resolve Supabase client statically based on environment (Next.js server context vs standalone background worker process)
 let cachedSupabase: any = null;
 export async function getSupabaseClient() {
   if (cachedSupabase) return cachedSupabase;
+
+  // Standalone node script execution fallback (worker mode or non-Next.js runtime)
+  if (process.env.IS_WORKER === "true" || !process.env.NEXT_RUNTIME) {
+    cachedSupabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+    return cachedSupabase;
+  }
+
   try {
-    // Check if next/headers is importable (running inside Next.js Server Action / Server Component)
-    const { cookies } = await import("next/headers");
-    const { createServerClient } = await import("@supabase/ssr");
     const cookieStore = await cookies();
     return createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -45,8 +60,6 @@ export async function getSupabaseClient() {
       }
     );
   } catch (e) {
-    // Standalone node script execution fallback (worker mode)
-    const { createClient } = await import("@supabase/supabase-js");
     cachedSupabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -308,7 +321,7 @@ export async function runLocalCodeAsync(
     fs.writeFileSync(javaFile, sourceCode, "utf-8");
     
     const compileStart = Date.now();
-    const compileResult = spawnSync("javac", [javaFile], {
+    const compileResult = safeSpawnSync("javac", [javaFile], {
       encoding: "utf-8",
       shell: true
     });
@@ -324,7 +337,7 @@ export async function runLocalCodeAsync(
     }
     
     const runStart = Date.now();
-    const runResult = spawnSync("java", ["-cp", javaSubDir, className], {
+    const runResult = safeSpawnSync("java", ["-cp", javaSubDir, className], {
       input: inputData,
       timeout: timeLimitMs,
       encoding: "utf-8",
@@ -371,7 +384,7 @@ export async function runLocalCodeAsync(
       runEnv.PATH = `${wingetCompilerPath};${runEnv.PATH || ""}`;
     }
 
-    const checkCompiler = spawnSync(compilerCmd, ["--version"], { 
+    const checkCompiler = safeSpawnSync(compilerCmd, ["--version"], { 
       env: runEnv,
       shell: true 
     });
@@ -383,7 +396,7 @@ export async function runLocalCodeAsync(
     }
     
     const compileStart = Date.now();
-    const compileResult = spawnSync(compilerCmd, [srcFile, "-o", binFile], {
+    const compileResult = safeSpawnSync(compilerCmd, [srcFile, "-o", binFile], {
       env: runEnv,
       encoding: "utf-8",
       shell: true
@@ -400,7 +413,7 @@ export async function runLocalCodeAsync(
     }
     
     const runStart = Date.now();
-    const runResult = spawnSync(binFile, [], {
+    const runResult = safeSpawnSync(binFile, [], {
       input: inputData,
       timeout: timeLimitMs,
       env: runEnv,
@@ -454,7 +467,7 @@ export async function runLocalCodeAsync(
     args = [filePath];
   } else if (language === "typescript") {
     cmd = "node";
-    const localTsNode = path.resolve("node_modules", "ts-node", "dist", "bin.js");
+    const localTsNode = [".", "node_modules", "ts-node", "dist", "bin.js"].join("/");
     args = [localTsNode, "--transpile-only", filePath];
   } else if (language === "python") {
     cmd = "python";
@@ -462,7 +475,7 @@ export async function runLocalCodeAsync(
   }
 
   const startTime = Date.now();
-  const result = spawnSync(cmd, args, {
+  const result = safeSpawnSync(cmd, args, {
     input: inputData,
     timeout: timeLimitMs,
     encoding: "utf-8",

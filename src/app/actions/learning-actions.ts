@@ -2,7 +2,6 @@
 
 import * as service from "@/services/learning";
 import { revalidatePath } from "next/cache";
-import * as runner from "@/services/runner";
 
 export async function getStudentAssignedActivitiesAction(studentId: string) {
   try {
@@ -94,6 +93,7 @@ export async function runChallengeCodeAction(
   sourceCode: string
 ) {
   try {
+    const runner = await import("@/services/runner");
     const results = await runner.executeVisibleTests(challengeId, language, sourceCode);
     return { results };
   } catch (error: any) {
@@ -113,6 +113,7 @@ export async function submitChallengeCodeAction(
     
     // Automatically trigger Judge Engine execution in background only if external worker process is disabled
     if (process.env.JUDGE_WORKER_ENABLED !== "true") {
+      const runner = await import("@/services/runner");
       runner.executeAllTestsAndGrade(submission.id).catch(console.error);
     }
 
