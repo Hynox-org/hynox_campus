@@ -3,6 +3,9 @@ import { createClient } from "@/utils/supabase/server";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
+  const host = request.headers.get("x-forwarded-host");
+  const proto = request.headers.get("x-forwarded-proto") || "https";
+  const publicOrigin = host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || origin);
   const code = searchParams.get("code");
   const next = searchParams.get("next") || "/";
 
@@ -128,11 +131,11 @@ export async function GET(request: Request) {
         finalDest = next;
       }
 
-      const forwardUrl = finalDest.startsWith("/") ? `${origin}${finalDest}` : finalDest;
+      const forwardUrl = finalDest.startsWith("/") ? `${publicOrigin}${finalDest}` : finalDest;
       return NextResponse.redirect(forwardUrl);
     }
   }
 
   // Fallback if exchange fails
-  return NextResponse.redirect(`${origin}/login?error=OAuthExchangeFailed`);
+  return NextResponse.redirect(`${publicOrigin}/login?error=OAuthExchangeFailed`);
 }
