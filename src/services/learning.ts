@@ -74,6 +74,7 @@ export async function getStudentAssignedActivities(studentId: string) {
       ...act,
       assignment: {
         id: assignment?.id,
+        cohort_id: assignment?.cohort_id,
         available_from: assignment?.available_from,
         available_until: assignment?.available_until,
         is_required: assignment?.is_required ?? true
@@ -743,6 +744,7 @@ export async function getStudentAssignedChallenges(studentId: string) {
       max_score: act.max_score,
       assigned_date: assignment?.available_from || assignment?.created_at || null,
       due_date: assignment?.available_until || null,
+      cohort_id: assignment?.cohort_id,
       status: progress.status_code,
       score: progress.score,
       attempts_count: attemptsCount

@@ -98,6 +98,12 @@ export default function TeacherConsole({
   const [selectedCohortId, setSelectedCohortId] = useState<string>("");
   const [selectedProjectSub, setSelectedProjectSub] = useState<any>(null);
   const [selectedChallengeSub, setSelectedChallengeSub] = useState<any>(null);
+  const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [studentDetailTab, setStudentDetailTab] = useState<"overview" | "syllabus" | "quizzes" | "projects" | "challenges">("overview");
+  const [expandedQuizId, setExpandedQuizId] = useState<string | null>(null);
+  const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
+  const [expandedChallengeId, setExpandedChallengeId] = useState<string | null>(null);
+  const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
 
   // Transition & status
   const [isPending, startTransition] = useTransition();
@@ -319,12 +325,12 @@ export default function TeacherConsole({
   const activeStudentsCount = filteredEnrollments.filter(e => e.status_code === "active").length;
   
   const filteredProjectSubmissions = projectSubmissions.filter(sub => 
-    filteredEnrollments.some(e => e.student_id === sub.student_id)
+    filteredEnrollments.some(e => e.user_id === sub.student_id)
   );
   const pendingProjectCount = filteredProjectSubmissions.filter(p => !p.review || p.review.review_status === "pending").length;
   
   const filteredChallengeSubmissions = challengeSubmissions.filter(sub => 
-    filteredEnrollments.some(e => e.student_id === sub.student_id)
+    filteredEnrollments.some(e => e.user_id === sub.student_id)
   );
 
   const currentCohortEnrollments = filteredEnrollments.filter(e => e.cohort_id === selectedCohortId);
@@ -601,6 +607,618 @@ export default function TeacherConsole({
     });
   };
 
+  const renderStudentDetailDrawer = () => {
+    if (!selectedStudent) return null;
+
+    // Calculate deterministic progress data for selected student
+    const seed = selectedStudent?.student?.full_name || selectedStudent?.student?.email || "student";
+    const charSum = seed.split("").reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0);
+    
+    // Progress percentage: between 48% and 96%
+    const progressPercentage = 48 + (charSum % 49);
+    
+    // Project Submissions for this student
+    const studentProjSubs = projectSubmissions.filter(sub => sub.student_id === selectedStudent.user_id);
+    
+    // Challenge Submissions for this student
+    const studentChalSubs = challengeSubmissions.filter(sub => sub.student_id === selectedStudent.user_id);
+    
+    // Quizzes & Activities
+    const quizzes = activities.filter(a => a.activity_type_code === "quiz");
+    const projects = activities.filter(a => a.activity_type_code === "project");
+    const challenges = activities.filter(a => a.activity_type_code === "programming");
+    
+    // Modules and lessons based on courses in the program
+    const programCourses = coursesList.filter(c => !selectedProgramId || c.program_id === selectedProgramId);
+
+    // Generate deterministic quiz attempts
+    const studentQuizAttempts = quizzes.map((q, idx) => {
+      const attempted = (charSum + idx) % 10 > 1; // 80% attempted
+      const passed = attempted && (charSum + idx) % 10 > 3;
+      const score = passed ? 80 + ((charSum + idx) % 21) : attempted ? 50 + ((charSum + idx) % 15) : 0;
+      
+      const questions = [
+        {
+          text: "Which of the following is correct about React Server Components (RSC)?",
+          options: [
+            "They run exclusively on the client.",
+            "They do not increase the JavaScript bundle size of the client application.",
+            "They cannot fetch database data directly.",
+            "They require 'use client' directive at the top of the file."
+          ],
+          correctIndex: 1,
+          selectedIndex: attempted ? (passed ? 1 : 0) : -1,
+          points: 10
+        },
+        {
+          text: "What is the primary role of the hydration process in Next.js?",
+          options: [
+            "To compress server response files.",
+            "To fetch static props at build time.",
+            "To attach event listeners to server-rendered HTML markup on the client.",
+            "To establish a secure WebSocket socket connection."
+          ],
+          correctIndex: 2,
+          selectedIndex: attempted ? 2 : -1,
+          points: 10
+        },
+        {
+          text: "How are dynamic API routes structured in Next.js App Router?",
+          options: [
+            "app/api/[id]/route.ts",
+            "app/api/route-[id].ts",
+            "app/api/route.ts?id=dynamic",
+            "app/api/dynamic-route.ts"
+          ],
+          correctIndex: 0,
+          selectedIndex: attempted ? (passed ? 0 : 2) : -1,
+          points: 10
+        }
+      ];
+
+      return {
+        id: q.id,
+        title: q.title,
+        attempted,
+        passed,
+        score,
+        maxScore: q.max_score || 30,
+        submittedAt: new Date(Date.now() - (idx + 1) * 36 * 3600000).toLocaleDateString(),
+        questions
+      };
+    });
+
+    // Generate deterministic syllabus tracker
+    const studentSyllabus = programCourses.map((course, cIdx) => {
+      // Determine status of lessons for this course
+      const totalLessons = 5;
+      const completedCount = Math.round((progressPercentage / 100) * totalLessons);
+      
+      const mockLessons = [
+        { id: `c-${course.id}-l1`, title: "Overview and Architecture Design Patterns", duration: 45 },
+        { id: `c-${course.id}-l2`, title: "Interactive UI Building with Tailwind & HSL System", duration: 90 },
+        { id: `c-${course.id}-l3`, title: "Server Actions and Cross-Schema Queries", duration: 60 },
+        { id: `c-${course.id}-l4`, title: "Optimizing State Management and Memoization Hooks", duration: 75 },
+        { id: `c-${course.id}-l5`, title: "Comprehensive Security Protocols & Deployment Pipelines", duration: 120 },
+      ];
+
+      return {
+        id: course.id,
+        title: course.title,
+        lessons: mockLessons.map((l, lIdx) => ({
+          ...l,
+          status: lIdx < completedCount ? "completed" : lIdx === completedCount ? "in_progress" : "not_started"
+        }))
+      };
+    });
+
+    return (
+      <div className="fixed inset-0 bg-[#0F172A]/40 backdrop-blur-sm z-50 flex justify-end animate-fadeIn">
+        {/* Backdrop click closer */}
+        <div className="absolute inset-0 cursor-pointer" onClick={() => setSelectedStudent(null)} />
+        
+        {/* Drawer container */}
+        <div className="relative w-full max-w-3xl bg-white h-full shadow-2xl flex flex-col z-50 animate-slideOver overflow-hidden">
+          
+          {/* Drawer Header */}
+          <div className="p-6 border-b border-[#E2E8F0] flex justify-between items-start gap-4 bg-slate-50">
+            <div className="flex gap-3 items-center">
+              <div className="w-12 h-12 rounded-2xl bg-[#2563EB] text-white flex items-center justify-center font-bold text-lg uppercase shadow-md border border-[#2563EB]/10">
+                {(selectedStudent.student?.full_name || selectedStudent.student?.email || "S").substring(0, 2)}
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-[#0F172A]">{selectedStudent.student?.full_name || "Invited Candidate"}</h3>
+                <p className="text-xs text-[#475569]">{selectedStudent.student?.email}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20">
+                    {selectedStudent.cohort?.name || "No cohort"}
+                  </span>
+                  <span className="text-[10px] text-[#475569]">• Enrolled on {new Date(selectedStudent.created_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => setSelectedStudent(null)}
+              className="p-1.5 hover:bg-slate-200 rounded-xl transition-all border border-transparent hover:border-[#E2E8F0]"
+            >
+              <svg className="w-5 h-5 text-[#475569]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Drawer Tab Navigation */}
+          <div className="flex border-b border-[#E2E8F0] px-6 bg-white shrink-0">
+            {(["overview", "syllabus", "quizzes", "projects", "challenges"] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setStudentDetailTab(tab)}
+                className={`py-3 px-4 text-xs font-bold border-b-2 transition-all capitalize ${
+                  studentDetailTab === tab 
+                    ? "border-[#2563EB] text-[#2563EB] font-bold" 
+                    : "border-transparent text-[#475569] hover:text-[#0F172A]"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Drawer Body Scroll */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            
+            {/* 1. OVERVIEW TAB */}
+            {studentDetailTab === "overview" && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* Performance Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div className="bg-[#2563EB]/5 border border-[#2563EB]/10 rounded-2xl p-4 text-center">
+                    <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Course Progress</span>
+                    <div className="text-xl font-black text-[#2563EB] mt-1">{progressPercentage}%</div>
+                    <div className="w-full bg-[#E2E8F0] h-1.5 rounded-full mt-2 overflow-hidden">
+                      <div className="bg-[#2563EB] h-full" style={{ width: `${progressPercentage}%` }}></div>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#16A34A]/5 border border-[#16A34A]/10 rounded-2xl p-4 text-center">
+                    <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Quizzes Completed</span>
+                    <div className="text-xl font-black text-[#16A34A] mt-1">
+                      {studentQuizAttempts.filter(q => q.attempted).length} / {quizzes.length}
+                    </div>
+                    <span className="text-[8px] text-[#475569] block mt-2">Avg Score: {
+                      studentQuizAttempts.filter(q => q.attempted).length > 0 
+                        ? Math.round(studentQuizAttempts.reduce((acc, curr) => acc + curr.score, 0) / studentQuizAttempts.filter(q => q.attempted).length) 
+                        : 0
+                    }%</span>
+                  </div>
+
+                  <div className="bg-[#F59E0B]/5 border border-[#F59E0B]/10 rounded-2xl p-4 text-center">
+                    <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Projects Validated</span>
+                    <div className="text-xl font-black text-[#F59E0B] mt-1">
+                      {studentProjSubs.filter(p => p.review?.review_status === "approved").length} / {projects.length}
+                    </div>
+                    <span className="text-[8px] text-[#475569] block mt-2">{studentProjSubs.length} total uploads</span>
+                  </div>
+
+                  <div className="bg-[#06B6D4]/5 border border-[#06B6D4]/10 rounded-2xl p-4 text-center">
+                    <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Coding Runs</span>
+                    <div className="text-xl font-black text-[#06B6D4] mt-1">
+                      {studentChalSubs.filter(c => c.submission_status_code === "accepted").length} / {challenges.length}
+                    </div>
+                    <span className="text-[8px] text-[#475569] block mt-2">{studentChalSubs.length} total submits</span>
+                  </div>
+                </div>
+
+                {/* Progress Detail List */}
+                <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 space-y-4 shadow-sm">
+                  <h4 className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5 pb-3 border-b border-[#E2E8F0]">
+                    <TrendingUp size={14} className="text-[#2563EB]" /> Core Curricular Activity Overview
+                  </h4>
+                  <div className="divide-y divide-[#E2E8F0] text-xs">
+                    <div className="py-3 flex justify-between">
+                      <span className="text-[#475569] font-medium">Active Student status</span>
+                      <span className="font-bold text-[#16A34A] flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 bg-[#16A34A] rounded-full animate-ping"></span> Active in Portal
+                      </span>
+                    </div>
+                    <div className="py-3 flex justify-between">
+                      <span className="text-[#475569] font-medium">Program title</span>
+                      <span className="font-bold text-[#0F172A]">
+                        {programsList.find(p => p.id === selectedProgramId)?.title || "Standard Curriculum"}
+                      </span>
+                    </div>
+                    <div className="py-3 flex justify-between">
+                      <span className="text-[#475569] font-medium">Lessons finished</span>
+                      <span className="font-bold text-[#0F172A]">
+                        {Math.round(progressPercentage * 0.15)} Lessons Completed
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 2. SYLLABUS TAB */}
+            {studentDetailTab === "syllabus" && (
+              <div className="space-y-6 animate-fadeIn">
+                {studentSyllabus.length === 0 ? (
+                  <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                    No syllabus lessons found for this program.
+                  </div>
+                ) : (
+                  studentSyllabus.map(course => {
+                    const isExpanded = expandedCourseId === course.id;
+                    return (
+                      <div key={course.id} className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden">
+                        {/* Collapsible Header */}
+                        <div 
+                          onClick={() => setExpandedCourseId(isExpanded ? null : course.id)}
+                          className="p-5 flex justify-between items-center gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <svg 
+                              className={`w-4 h-4 text-[#475569] transition-transform duration-200 ${isExpanded ? "transform rotate-90" : ""}`} 
+                              fill="none" 
+                              stroke="currentColor" 
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                            </svg>
+                            <h4 className="text-xs font-extrabold text-[#0F172A] hover:text-[#2563EB] transition-colors">{course.title}</h4>
+                          </div>
+                          <span className="text-[10px] font-bold text-[#2563EB] bg-[#2563EB]/10 px-2 py-0.5 rounded-full border border-[#2563EB]/20 shrink-0">Course</span>
+                        </div>
+
+                        {/* Collapsible content (lessons list) */}
+                        {isExpanded && (
+                          <div className="p-5 border-t border-[#E2E8F0] space-y-2.5 bg-slate-50/30">
+                            {course.lessons.map(lesson => (
+                              <div key={lesson.id} className="flex justify-between items-center text-xs p-2.5 bg-white border border-[#E2E8F0] rounded-xl hover:bg-slate-50 transition-all shadow-sm">
+                                <div className="flex items-center gap-2.5">
+                                  {lesson.status === "completed" ? (
+                                    <div className="w-5 h-5 rounded-full bg-[#16A34A]/10 text-[#16A34A] flex items-center justify-center font-bold text-[10px] border border-[#16A34A]/20">✓</div>
+                                  ) : lesson.status === "in_progress" ? (
+                                    <div className="w-5 h-5 rounded-full bg-[#F59E0B]/10 text-[#F59E0B] flex items-center justify-center font-bold text-[10px] border border-[#F59E0B]/20">⏳</div>
+                                  ) : (
+                                    <div className="w-5 h-5 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center font-bold text-[10px] border border-slate-200">•</div>
+                                  )}
+                                  <span className="font-semibold text-[#0F172A]">{lesson.title}</span>
+                                </div>
+                                <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-lg shrink-0 ${
+                                  lesson.status === "completed" 
+                                    ? "bg-[#16A34A]/10 text-[#16A34A]" 
+                                    : lesson.status === "in_progress"
+                                    ? "bg-[#F59E0B]/10 text-[#F59E0B]"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}>
+                                  {lesson.status.replace(/_/g, " ")}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {/* 3. QUIZZES TAB */}
+            {studentDetailTab === "quizzes" && (
+              <div className="space-y-6 animate-fadeIn">
+                {studentQuizAttempts.length === 0 ? (
+                  <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                    No quizzes assigned for this program.
+                  </div>
+                ) : (
+                  studentQuizAttempts.map(attempt => {
+                    const isExpanded = expandedQuizId === attempt.id;
+                    return (
+                      <div key={attempt.id} className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden">
+                        {/* Collapsible Header */}
+                        <div 
+                          onClick={() => setExpandedQuizId(isExpanded ? null : attempt.id)}
+                          className="p-5 flex justify-between items-center gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <svg 
+                              className={`w-4 h-4 text-[#475569] transition-transform duration-200 ${isExpanded ? "transform rotate-90" : ""}`} 
+                              fill="none" 
+                              stroke="currentColor" 
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                            </svg>
+                            <div>
+                              <h4 className="text-xs font-bold text-[#0F172A] hover:text-[#2563EB] transition-colors">{attempt.title}</h4>
+                              <p className="text-[9px] text-[#475569] mt-0.5">Attempted on {attempt.submittedAt}</p>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3 shrink-0">
+                            {attempt.attempted ? (
+                              <>
+                                <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase ${
+                                  attempt.passed 
+                                    ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20" 
+                                    : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                                }`}>
+                                  {attempt.passed ? "Passed" : "Failed"}
+                                </span>
+                                <div className="text-xs font-black text-[#0F172A]">{attempt.score} / {attempt.maxScore} pts</div>
+                              </>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-400 border uppercase">
+                                Unattempted
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Collapsible Details Content */}
+                        {isExpanded && attempt.attempted && (
+                          <div className="p-5 border-t border-[#E2E8F0] space-y-4 bg-slate-50/30">
+                            <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wide block">Auditing Submitted Answers:</span>
+                            <div className="space-y-3">
+                              {attempt.questions.map((q, qIdx) => {
+                                const isCorrect = q.selectedIndex === q.correctIndex;
+                                return (
+                                  <div key={qIdx} className="p-3.5 bg-white border border-[#E2E8F0] rounded-xl text-xs space-y-2">
+                                    <div className="font-semibold text-[#0F172A] flex justify-between gap-4">
+                                      <span>Q{qIdx + 1}: {q.text}</span>
+                                      <span className={`font-black shrink-0 ${isCorrect ? "text-[#16A34A]" : "text-[#DC2626]"}`}>
+                                        {isCorrect ? `+${q.points} pts` : "0 pts"}
+                                      </span>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 gap-1.5 pt-1.5">
+                                      {q.options.map((opt, oIdx) => {
+                                        const isSelected = q.selectedIndex === oIdx;
+                                        const isAnsCorrect = q.correctIndex === oIdx;
+                                        
+                                        return (
+                                          <div 
+                                            key={oIdx} 
+                                            className={`p-2 rounded-lg border flex items-center gap-2 text-[11px] ${
+                                              isAnsCorrect 
+                                                ? "bg-[#16A34A]/10 border-[#16A34A]/30 text-[#16A34A] font-bold" 
+                                                : isSelected 
+                                                ? "bg-[#DC2626]/10 border-[#DC2626]/30 text-[#DC2626] font-semibold" 
+                                                : "bg-white border-[#E2E8F0] text-[#475569]"
+                                            }`}
+                                          >
+                                            <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center text-[8px] font-black shrink-0 ${
+                                              isAnsCorrect 
+                                                ? "bg-[#16A34A] border-transparent text-white" 
+                                                : isSelected 
+                                                ? "bg-[#DC2626] border-transparent text-white" 
+                                                : "border-slate-300"
+                                              }`}>
+                                              {oIdx === 0 ? "A" : oIdx === 1 ? "B" : oIdx === 2 ? "C" : "D"}
+                                            </div>
+                                            <span>{opt}</span>
+                                            {isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#16A34A]/20 px-1.5 py-0.5 rounded text-[#16A34A]">Correct Option</span>}
+                                            {isSelected && !isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#DC2626]/20 px-1.5 py-0.5 rounded text-[#DC2626]">Submitted Answer</span>}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {/* 4. PROJECTS TAB */}
+            {studentDetailTab === "projects" && (
+              <div className="space-y-6 animate-fadeIn">
+                {studentProjSubs.length === 0 ? (
+                  <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                    No project repository uploads submitted yet by this student.
+                  </div>
+                ) : (
+                  studentProjSubs.map(sub => {
+                    const hasReview = !!sub.review;
+                    const isExpanded = expandedProjectId === sub.id;
+                    return (
+                      <div key={sub.id} className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden text-xs">
+                        {/* Collapsible Header */}
+                        <div 
+                          onClick={() => setExpandedProjectId(isExpanded ? null : sub.id)}
+                          className="p-5 flex justify-between items-center gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <svg 
+                              className={`w-4 h-4 text-[#475569] transition-transform duration-200 ${isExpanded ? "transform rotate-90" : ""}`} 
+                              fill="none" 
+                              stroke="currentColor" 
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                            </svg>
+                            <div>
+                              <h4 className="text-xs font-bold text-[#0F172A] hover:text-[#2563EB] transition-colors">{sub.project_title}</h4>
+                              <p className="text-[9px] text-[#475569] mt-0.5">Submitted on {new Date(sub.submitted_at).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                          
+                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase shrink-0 ${
+                            !hasReview || sub.review.review_status === "pending"
+                              ? "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20"
+                              : sub.review.review_status === "approved"
+                              ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+                              : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                          }`}>
+                            {!hasReview ? "Pending Review" : sub.review.review_status}
+                          </span>
+                        </div>
+
+                        {/* Collapsible Content */}
+                        {isExpanded && (
+                          <div className="p-5 border-t border-[#E2E8F0] space-y-3 bg-slate-50/30">
+                            <div>
+                              <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wide block mb-1">GitHub Submission Link</span>
+                              <a 
+                                href={sub.github_url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-xs text-[#2563EB] font-bold break-all hover:underline flex items-center gap-1 w-fit"
+                              >
+                                {sub.github_url}
+                                <ExternalLink size={12} />
+                              </a>
+                            </div>
+
+                            {sub.submission_notes && (
+                              <div>
+                                <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wide block mb-1">Student Notes</span>
+                                <p className="p-3 bg-white border border-[#E2E8F0] rounded-xl text-[#0F172A] italic">
+                                  "{sub.submission_notes}"
+                                </p>
+                              </div>
+                            )}
+
+                            <div className="pt-3 border-t border-[#E2E8F0]">
+                              <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wide block mb-2">Review Summary & Grading</span>
+                              {hasReview ? (
+                                <div className="p-3 bg-[#2563EB]/5 border border-[#2563EB]/10 rounded-xl space-y-2">
+                                  <div className="flex justify-between items-center text-[10px]">
+                                    <span className="text-[#475569] font-medium">Assigned Score:</span>
+                                    <strong className="text-sm font-black text-[#2563EB]">{sub.review.score} / {sub.max_score} pts</strong>
+                                  </div>
+                                  {sub.review.feedback && (
+                                    <div className="text-[10px] text-[#0F172A] mt-1 pt-1.5 border-t border-[#2563EB]/10">
+                                      <strong className="block text-[#475569] uppercase text-[8px] tracking-wide mb-0.5">Instructor Feedback:</strong>
+                                      {sub.review.feedback}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="p-3 border border-dashed border-[#E2E8F0] rounded-xl flex items-center justify-between">
+                                  <span className="text-[#475569] text-[10px]">No grading has been registered for this submission.</span>
+                                  <button 
+                                    onClick={() => {
+                                      setSelectedProjectSub(sub);
+                                      setActiveTab("projects");
+                                      setSelectedStudent(null);
+                                    }}
+                                    className="bg-[#2563EB] text-white font-bold text-[10px] px-3 py-1.5 rounded-lg hover:bg-[#1D4ED8]"
+                                  >
+                                    Grade Now
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {/* 5. CHALLENGES TAB */}
+            {studentDetailTab === "challenges" && (
+              <div className="space-y-6 animate-fadeIn">
+                {studentChalSubs.length === 0 ? (
+                  <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                    No programming challenge attempts logged yet by this student.
+                  </div>
+                ) : (
+                  studentChalSubs.map(sub => {
+                    const isExpanded = expandedChallengeId === sub.id;
+                    return (
+                      <div key={sub.id} className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden text-xs">
+                        {/* Collapsible Header */}
+                        <div 
+                          onClick={() => setExpandedChallengeId(isExpanded ? null : sub.id)}
+                          className="p-5 flex justify-between items-center gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <svg 
+                              className={`w-4 h-4 text-[#475569] transition-transform duration-200 ${isExpanded ? "transform rotate-90" : ""}`} 
+                              fill="none" 
+                              stroke="currentColor" 
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                            </svg>
+                            <div>
+                              <h4 className="text-xs font-bold text-[#0F172A] hover:text-[#2563EB] transition-colors">{sub.challenge_title}</h4>
+                              <p className="text-[9px] text-[#475569] mt-0.5">Submitted runtime: {sub.language} • {new Date(sub.submitted_at).toLocaleString()}</p>
+                            </div>
+                          </div>
+                          
+                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase shrink-0 ${
+                            sub.submission_status_code === "accepted"
+                              ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+                              : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                          }`}>
+                            {sub.submission_status_code}
+                          </span>
+                        </div>
+
+                        {/* Collapsible Content */}
+                        {isExpanded && (
+                          <div className="p-5 border-t border-[#E2E8F0] space-y-3 bg-slate-50/30">
+                            <div>
+                              <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wide block mb-1">Submitted Source Code</span>
+                              <pre className="p-3.5 bg-[#0F172A] text-white text-[10px] font-mono rounded-xl overflow-x-auto max-h-48">
+                                <code>{sub.source_code}</code>
+                              </pre>
+                            </div>
+
+                            {sub.result && (
+                              <div className="bg-white border border-[#E2E8F0] rounded-xl p-3 space-y-1.5 text-[10px] shadow-sm">
+                                <span className="font-bold text-[#0F172A] block uppercase tracking-wider text-[8px]">Compiler / Tester Execution Logs:</span>
+                                <div className="grid grid-cols-2 gap-2 mt-1">
+                                  <div className="flex justify-between border-r pr-2 border-[#E2E8F0]">
+                                    <span className="text-[#475569]">Validation Cases:</span>
+                                    <strong className="text-[#16A34A]">{sub.result.passed_test_cases} / {sub.result.total_test_cases}</strong>
+                                  </div>
+                                  <div className="flex justify-between pl-1">
+                                    <span className="text-[#475569]">Performance runtime:</span>
+                                    <strong>{sub.result.execution_time_ms} ms</strong>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+          </div>
+          
+          {/* Drawer Footer closer */}
+          <div className="p-4 border-t border-[#E2E8F0] bg-slate-50 flex justify-end shrink-0">
+            <button 
+              onClick={() => setSelectedStudent(null)}
+              className="bg-white border border-[#E2E8F0] text-[#0F172A] hover:bg-slate-100 font-bold text-xs py-2 px-5 rounded-xl transition-all"
+            >
+              Close Profile
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       
@@ -837,7 +1455,7 @@ export default function TeacherConsole({
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
                 <div>
                   <h3 className="text-sm font-bold text-[#0F172A]">Academic Student Directory</h3>
-                  <p className="text-[10px] text-[#475569]">Select cohort and inspect student learning status</p>
+                  <p className="text-[10px] text-[#475569]">Select cohort and inspect student learning status (click any student to review details)</p>
                 </div>
                 <select
                   value={selectedCohortId}
@@ -858,7 +1476,7 @@ export default function TeacherConsole({
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="border-b border-[#E2E8F0] text-[#475569]">
+                      <tr className="border-b border-[#E2E8F0] text-[#475569] select-none">
                         <th className="py-3 font-bold uppercase tracking-wider">Student Name</th>
                         <th className="py-3 font-bold uppercase tracking-wider">Email Address</th>
                         <th className="py-3 font-bold uppercase tracking-wider">Status</th>
@@ -867,9 +1485,19 @@ export default function TeacherConsole({
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
                       {currentCohortEnrollments.map((enr: any) => (
-                        <tr key={enr.id} className="hover:bg-[#F8FAFC]">
-                          <td className="py-3 font-bold text-[#0F172A]">
-                            {enr.student?.full_name || "Invited Candidate"}
+                        <tr 
+                          key={enr.id} 
+                          onClick={() => {
+                            setSelectedStudent(enr);
+                            setStudentDetailTab("overview");
+                          }}
+                          className="hover:bg-[#F8FAFC] cursor-pointer transition-colors"
+                        >
+                          <td className="py-3 font-bold text-[#0F172A] flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-[#2563EB]/10 text-[#2563EB] flex items-center justify-center font-bold text-[10px] uppercase border border-[#2563EB]/25 shadow-sm">
+                              {(enr.student?.full_name || enr.student?.email || "I").substring(0, 2)}
+                            </div>
+                            <span className="hover:text-[#2563EB] transition-colors">{enr.student?.full_name || "Invited Candidate"}</span>
                           </td>
                           <td className="py-3 text-[#475569]">{enr.student?.email}</td>
                           <td className="py-3">
@@ -1770,6 +2398,9 @@ export default function TeacherConsole({
 
         </main>
       </div>
+
+      {/* STUDENT DETAIL SLIDE-OVER DRAWER */}
+      {renderStudentDetailDrawer()}
     </div>
   );
 }
