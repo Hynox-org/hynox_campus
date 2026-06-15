@@ -259,4 +259,194 @@ export async function listChallengeSubmissionsAction(tenantId: string) {
   }
 }
 
+import { createClient } from "@/utils/supabase/server";
+
+export async function getActivityDetailsNoStudentAction(activityId: string, activityType: string) {
+  try {
+    const supabase = await createClient();
+    
+    if (activityType === "quiz") {
+      const { data: quiz, error: qError } = await supabase
+        .schema("learning")
+        .from("quizzes")
+        .select("*")
+        .eq("activity_id", activityId)
+        .maybeSingle();
+      if (qError) throw qError;
+      if (!quiz) return { error: "Quiz not found" };
+
+      const { data: questions, error: questError } = await supabase
+        .schema("learning")
+        .from("quiz_questions")
+        .select("*")
+        .eq("quiz_id", quiz.id)
+        .order("position", { ascending: true });
+      if (questError) throw questError;
+
+      const questionIds = (questions || []).map(q => q.id);
+      let options: any[] = [];
+      if (questionIds.length > 0) {
+        const { data: optData } = await supabase
+          .schema("learning")
+          .from("quiz_options")
+          .select("*")
+          .in("question_id", questionIds)
+          .order("position", { ascending: true });
+        options = optData || [];
+      }
+
+      return {
+        quiz,
+        questions: (questions || []).map(q => ({
+          ...q,
+          options: options.filter(o => o.question_id === q.id)
+        }))
+      };
+    } else if (activityType === "project") {
+      const { data: project, error: pError } = await supabase
+        .schema("learning")
+        .from("projects")
+        .select("*")
+        .eq("activity_id", activityId)
+        .maybeSingle();
+      if (pError) throw pError;
+      return { project };
+    } else if (activityType === "programming") {
+      const { data: challenge, error: cError } = await supabase
+        .schema("learning")
+        .from("programming_challenges")
+        .select("*")
+        .eq("activity_id", activityId)
+        .maybeSingle();
+      if (cError) throw cError;
+      if (!challenge) return { error: "Challenge not found" };
+
+      const { data: examples } = await supabase
+        .schema("learning")
+        .from("challenge_examples")
+        .select("*")
+        .eq("challenge_id", challenge.id)
+        .order("example_number", { ascending: true });
+
+      const { data: testCases } = await supabase
+        .schema("learning")
+        .from("challenge_test_cases")
+        .select("*")
+        .eq("challenge_id", challenge.id)
+        .order("position", { ascending: true });
+
+      return {
+        challenge,
+        examples: examples || [],
+        testCases: testCases || []
+      };
+    }
+    return { error: "Unknown activity type" };
+  } catch (error: any) {
+    return { error: error.message || "Failed to load activity details." };
+  }
+}
+
+export async function listActivityProgressAction(activityId: string) {
+  try {
+    const supabase = await createClient();
+    
+    const { data: assignments, error: assignError } = await supabase
+      .schema("learning")
+      .from("activity_assignments")
+      .select("id")
+      .eq("activity_id", activityId)
+      .is("deleted_at", null);
+      
+    if (assignError) throw assignError;
+    if (!assignments || assignments.length === 0) return { progress: [] };
+    
+    const assignIds = assignments.map(a => a.id);
+    const { data: progress, error: progError } = await supabase
+      .schema("learning")
+      .from("student_activity_progress")
+      .select("*")
+      .in("activity_assignment_id", assignIds)
+      .order("updated_at", { ascending: false });
+      
+    if (progError) throw progError;
+    if (!progress || progress.length === 0) return { progress: [] };
+    
+    const studentIds = [...new Set(progress.map(p => p.student_id))];
+    const { data: students } = await supabase
+      .schema("core")
+      .from("users")
+      .select("id, full_name, email")
+      .in("id", studentIds);
+      
+    return {
+      progress: progress.map(p => ({
+        ...p,
+        student: students?.find(s => s.id === p.student_id) || null
+      }))
+    };
+  } catch (error: any) {
+    return { error: error.message || "Failed to load activity progress." };
+  }
+}
+
+export async function listQuizAttemptsAction(tenantId: string) {
+  try {
+    const supabase = await createClient();
+    const { data: quizzes, error: qError } = await supabase
+      .schema("learning")
+      .from("quizzes")
+      .select(`
+        id,
+        activity_id,
+        activities!inner (
+          id,
+          title,
+          tenant_id,
+          max_score
+        )
+      `)
+      .eq("activities.tenant_id", tenantId);
+
+    if (qError) throw qError;
+    if (!quizzes || quizzes.length === 0) return { attempts: [] };
+
+    const quizIds = quizzes.map(q => q.id);
+
+    const { data: attempts, error: attError } = await supabase
+      .schema("learning")
+      .from("quiz_attempts")
+      .select("*")
+      .in("quiz_id", quizIds)
+      .order("submitted_at", { ascending: false });
+
+    if (attError) throw attError;
+    if (!attempts || attempts.length === 0) return { attempts: [] };
+
+    const studentIds = [...new Set(attempts.map(a => a.student_id))];
+    const { data: students } = await supabase
+      .schema("core")
+      .from("users")
+      .select("id, full_name, email")
+      .in("id", studentIds);
+
+    return {
+      attempts: attempts.map(att => {
+        const quiz: any = quizzes.find(q => q.id === att.quiz_id);
+        const student = students?.find(s => s.id === att.student_id) || null;
+
+        return {
+          ...att,
+          quiz_title: quiz?.activities?.title || "Unknown Quiz",
+          max_score: Number(quiz?.activities?.max_score || 100),
+          student
+        };
+      })
+    };
+  } catch (error: any) {
+    return { error: error.message || "Failed to load quiz attempts." };
+  }
+}
+
+
 

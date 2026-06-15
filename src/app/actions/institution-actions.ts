@@ -5,7 +5,10 @@ import {
   createInstitution, 
   assignInstitutionAdmin,
   listInstitutionUsers,
-  listTeacherInstitutions
+  listTeacherInstitutions,
+  listAllTeachers,
+  mapTeacherToTenant,
+  unmapTeacherFromTenant
 } from "@/services/institution";
 import { 
   processCsvOnboarding,
@@ -14,6 +17,7 @@ import {
   onboardSingleUser
 } from "@/services/onboarding";
 import { revalidatePath } from "next/cache";
+import { createClient } from "@/utils/supabase/server";
 
 export async function createNewInstitutionAction(formData: FormData) {
   const name = formData.get("name") as string;
@@ -225,5 +229,67 @@ export async function listTeacherInstitutionsAction(userId: string) {
     return { success: true, institutions: data };
   } catch (error: any) {
     return { error: error.message || "Failed to list teacher institutions." };
+  }
+}
+
+export async function listAllTeachersAction() {
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    const teachers = await listAllTeachers();
+    return { success: true, teachers };
+  } catch (error: any) {
+    return { error: error.message || "Failed to list teachers." };
+  }
+}
+
+export async function mapTeacherToInstitutionAction(userId: string, tenantId: string) {
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    await mapTeacherToTenant(userId, tenantId);
+    revalidatePath("/admin");
+    return { success: true };
+  } catch (error: any) {
+    return { error: error.message || "Failed to map teacher to institution." };
+  }
+}
+
+export async function unmapTeacherFromInstitutionAction(userId: string, tenantId: string) {
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    await unmapTeacherFromTenant(userId, tenantId);
+    revalidatePath("/admin");
+    return { success: true };
+  } catch (error: any) {
+    return { error: error.message || "Failed to unmap teacher from institution." };
+  }
+}
+
+export async function getTeacherInstitutionDetailsAction(userId: string) {
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .rpc("get_teacher_institutions_and_programs", { p_teacher_id: userId });
+
+    if (error) throw error;
+    return { success: true, details: data || [] };
+  } catch (error: any) {
+    return { error: error.message || "Failed to retrieve teacher institution details." };
   }
 }

@@ -8,29 +8,60 @@ import {
   listCoursesAction,
   listModulesAction,
   listLessonsAction,
-  listLessonResourcesAction
+  listLessonResourcesAction,
+  createModuleAction,
+  updateModuleAction,
+  deleteModuleAction,
+  createLessonAction,
+  updateLessonAction,
+  deleteLessonAction,
+  createLessonResourceAction,
+  deleteLessonResourceAction,
+  updateCourseAction,
+  getAcademicLookupsAction
 } from "@/app/actions/academic-actions";
 import { listCourseTemplatesAction, instantiateCourseTemplateAction } from "@/app/actions/library-actions";
 import { 
-  Folder, Plus, Edit, Trash2, X, ChevronRight, ChevronDown, 
-  BookOpen, PlusCircle, CheckCircle, AlertCircle, Play, 
-  FileText, Link2, ExternalLink
+  Folder, Plus, Trash2, X, ChevronRight, ChevronDown, 
+  BookOpen, PlusCircle, CheckCircle2, AlertCircle, 
+  FileText, Calendar, Clock, Sparkles, Edit
 } from "lucide-react";
 
 interface ProgramManagerProps {
   institutions: any[];
+  mode?: "explorer" | "examine";
+  selectedInstId: string;
+  setSelectedInstId: (id: string) => void;
+  selectedProgram: any | null;
+  setSelectedProgram: (prog: any | null) => void;
 }
 
-export default function ProgramManager({ institutions }: ProgramManagerProps) {
-  const [selectedInstId, setSelectedInstId] = useState("");
+export default function ProgramManager({ 
+  institutions, 
+  mode = "explorer",
+  selectedInstId,
+  setSelectedInstId,
+  selectedProgram,
+  setSelectedProgram
+}: ProgramManagerProps) {
   const [programs, setPrograms] = useState<any[]>([]);
-  const [selectedProgram, setSelectedProgram] = useState<any | null>(null);
-  
-  // Tree Structure State
-  const [treeCourses, setTreeCourses] = useState<any[]>([]);
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
 
-  // Library Course Templates for Instantiation
+  // Lazy Loaded Cache States (solves HTTP RPC query waterfall bottlenecks)
+  const [courses, setCourses] = useState<any[]>([]);
+  const [modulesCache, setModulesCache] = useState<Record<string, any[]>>({});
+  const [lessonsCache, setLessonsCache] = useState<Record<string, any[]>>({});
+  const [resourcesCache, setResourcesCache] = useState<Record<string, any[]>>({});
+
+  // Loading indicator maps for individual nodes
+  const [modulesLoading, setModulesLoading] = useState<Record<string, boolean>>({});
+  const [lessonsLoading, setLessonsLoading] = useState<Record<string, boolean>>({});
+
+  // Node toggle states
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
+  const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
+
+  // Blueprints
   const [blueprints, setBlueprints] = useState<any[]>([]);
   const [selectedBlueprintId, setSelectedBlueprintId] = useState("");
 
@@ -38,31 +69,70 @@ export default function ProgramManager({ institutions }: ProgramManagerProps) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // Modals / forms
+  // Modals / forms for Programs
   const [programModalOpen, setProgramModalOpen] = useState(false);
-  const [programForm, setProgramForm] = useState({
+  const [programForm, setProgramForm] = useState({ title: "", slug: "", description: "" });
+
+  // Lookups data for editing lessons
+  const [lessonTypes, setLessonTypes] = useState<any[]>([]);
+  const [defaultStatusId, setDefaultStatusId] = useState("");
+  const [defaultLessonTypeId, setDefaultLessonTypeId] = useState("");
+
+  // Modals / forms for Course Editing
+  const [editingCourse, setEditingCourse] = useState<any | null>(null);
+  const [courseModalOpen, setCourseModalOpen] = useState(false);
+  const [courseForm, setCourseForm] = useState({ title: "", slug: "", duration_minutes: 60 });
+
+  // Modals / forms for Modules
+  const [moduleModalOpen, setModuleModalOpen] = useState(false);
+  const [editingModule, setEditingModule] = useState<any | null>(null);
+  const [moduleForm, setModuleForm] = useState({ title: "", position: 1 });
+
+  // Modals / forms for Lessons
+  const [lessonModalOpen, setLessonModalOpen] = useState(false);
+  const [editingLesson, setEditingLesson] = useState<any | null>(null);
+  const [targetModuleId, setTargetModuleId] = useState<string | null>(null);
+  const [lessonForm, setLessonForm] = useState({ title: "", duration: 30, position: 1 });
+
+  // Modals / forms for Resources
+  const [resourceModalOpen, setResourceModalOpen] = useState(false);
+  const [targetLessonId, setTargetLessonId] = useState<string | null>(null);
+  const [resourceForm, setResourceForm] = useState({
     title: "",
-    slug: "",
-    description: ""
+    resource_type: "link",
+    external_url: "",
+    file_url: ""
   });
 
-  // Fetch programs and blueprints
+  // Fetch blueprints and lookups on mount
   useEffect(() => {
-    async function loadBlueprints() {
+    async function loadInitialData() {
       const bRes = await listCourseTemplatesAction();
       if (bRes.templates) {
         setBlueprints(bRes.templates);
       }
+      const lRes = await getAcademicLookupsAction();
+      if (lRes.success && lRes.lookups) {
+        setLessonTypes(lRes.lookups.lessonTypes);
+        const textType = lRes.lookups.lessonTypes.find((t: any) => t.code === "text") || lRes.lookups.lessonTypes[0];
+        if (textType) setDefaultLessonTypeId(textType.id);
+        const activeStatus = lRes.lookups.statuses.find((s: any) => s.code === "active") || lRes.lookups.statuses[0];
+        if (activeStatus) setDefaultStatusId(activeStatus.id);
+      }
     }
-    loadBlueprints();
+    loadInitialData();
   }, []);
 
+  // Fetch programs when institution changes
   useEffect(() => {
     if (!selectedInstId) {
       setPrograms([]);
       setSelectedProgram(null);
       return;
     }
+    // Reset selection to prevent cross-institution leakage
+    setSelectedProgram(null);
+
     async function loadPrograms() {
       setLoading(true);
       setError("");
@@ -77,44 +147,96 @@ export default function ProgramManager({ institutions }: ProgramManagerProps) {
     loadPrograms();
   }, [selectedInstId]);
 
-  // Load Tree/Course structure when selected program changes
+  // Fetch courses when selected program changes (Examine mode)
   useEffect(() => {
     if (!selectedProgram) {
-      setTreeCourses([]);
+      setCourses([]);
+      setSelectedCourseId(null);
       return;
     }
-    loadProgramTree(selectedProgram.id);
+    async function loadCourses() {
+      setLoading(true);
+      setError("");
+      const res = await listCoursesAction(selectedProgram.id);
+      if (res.courses) {
+        setCourses(res.courses);
+        if (res.courses.length > 0) {
+          handleSelectCourse(res.courses[0].id);
+        } else {
+          setSelectedCourseId(null);
+        }
+      } else if (res.error) {
+        setError(res.error);
+      }
+      setLoading(false);
+    }
+    loadCourses();
   }, [selectedProgram]);
 
-  const loadProgramTree = async (programId: string) => {
-    setLoading(true);
-    const cRes = await listCoursesAction(programId);
-    if (cRes.courses) {
-      const coursesWithCurriculum = await Promise.all(
-        cRes.courses.map(async (course: any) => {
-          const mRes = await listModulesAction(course.id);
-          const modules = mRes.modules || [];
-          const modulesWithLessons = await Promise.all(
-            modules.map(async (mod: any) => {
-              const lRes = await listLessonsAction(mod.id);
-              const lessons = lRes.lessons || [];
-              const lessonsWithResources = await Promise.all(
-                lessons.map(async (les: any) => {
-                  const rRes = await listLessonResourcesAction(les.id);
-                  return { ...les, resources: rRes.resources || [] };
-                })
-              );
-              return { ...mod, lessons: lessonsWithResources };
-            })
-          );
-          return { ...course, modules: modulesWithLessons };
-        })
-      );
-      setTreeCourses(coursesWithCurriculum);
-    } else if (cRes.error) {
-      setError(cRes.error);
+  // Lazy load modules for a specific course
+  const handleSelectCourse = async (courseId: string) => {
+    setSelectedCourseId(courseId);
+    if (modulesCache[courseId]) return; // use cache
+
+    setModulesLoading(prev => ({ ...prev, [courseId]: true }));
+    const res = await listModulesAction(courseId);
+    if (res.modules) {
+      setModulesCache(prev => ({ ...prev, [courseId]: res.modules }));
     }
-    setLoading(false);
+    setModulesLoading(prev => ({ ...prev, [courseId]: false }));
+  };
+
+  const refreshModules = async (courseId: string) => {
+    setModulesLoading(prev => ({ ...prev, [courseId]: true }));
+    const res = await listModulesAction(courseId);
+    if (res.modules) {
+      setModulesCache(prev => ({ ...prev, [courseId]: res.modules }));
+    }
+    setModulesLoading(prev => ({ ...prev, [courseId]: false }));
+  };
+
+  // Lazy load lessons for a module
+  const toggleModuleExpand = async (moduleId: string) => {
+    const isExpanded = !!expandedModules[moduleId];
+    setExpandedModules(prev => ({ ...prev, [moduleId]: !isExpanded }));
+
+    if (isExpanded || lessonsCache[moduleId]) return; // already loaded or collapsing
+
+    setLessonsLoading(prev => ({ ...prev, [moduleId]: true }));
+    const res = await listLessonsAction(moduleId);
+    if (res.lessons) {
+      setLessonsCache(prev => ({ ...prev, [moduleId]: res.lessons }));
+    }
+    setLessonsLoading(prev => ({ ...prev, [moduleId]: false }));
+  };
+
+  const refreshLessons = async (moduleId: string) => {
+    setLessonsLoading(prev => ({ ...prev, [moduleId]: true }));
+    const res = await listLessonsAction(moduleId);
+    if (res.lessons) {
+      setLessonsCache(prev => ({ ...prev, [moduleId]: res.lessons }));
+    }
+    setLessonsLoading(prev => ({ ...prev, [moduleId]: false }));
+  };
+
+  // Lazy load resources for a lesson
+  const toggleLessonExpand = async (lessonId: string) => {
+    const isExpanded = !!expandedLessons[lessonId];
+    setExpandedLessons(prev => ({ ...prev, [lessonId]: !isExpanded }));
+
+    if (isExpanded || resourcesCache[lessonId]) return;
+
+    const res = await listLessonResourcesAction(lessonId);
+    if (res.resources) {
+      setResourcesCache(prev => ({ ...prev, [lessonId]: res.resources }));
+    }
+  };
+
+  const refreshResources = async (lessonId: string) => {
+    const res = await listLessonResourcesAction(lessonId);
+    if (res.resources) {
+      setResourcesCache(prev => ({ ...prev, [lessonId]: res.resources }));
+    }
   };
 
   const handleProgramSubmit = async (e: React.FormEvent) => {
@@ -135,7 +257,6 @@ export default function ProgramManager({ institutions }: ProgramManagerProps) {
       setSuccess("Program registered successfully!");
       setProgramModalOpen(false);
       setProgramForm({ title: "", slug: "", description: "" });
-      // reload
       const reloadRes = await listProgramsAction(selectedInstId);
       if (reloadRes.programs) setPrograms(reloadRes.programs);
     }
@@ -143,14 +264,7 @@ export default function ProgramManager({ institutions }: ProgramManagerProps) {
   };
 
   const handleInstantiation = async () => {
-    if (!selectedBlueprintId) {
-      setError("Please select a course template from the library.");
-      return;
-    }
-    if (!selectedProgram) {
-      setError("Please select an academic program.");
-      return;
-    }
+    if (!selectedBlueprintId || !selectedProgram) return;
 
     setLoading(true);
     setError("");
@@ -166,35 +280,593 @@ export default function ProgramManager({ institutions }: ProgramManagerProps) {
     if (res.error) {
       setError(res.error);
     } else {
-      setSuccess("Course blueprint instantiated successfully!");
+      setSuccess("Course template instantiated successfully!");
       setSelectedBlueprintId("");
-      await loadProgramTree(selectedProgram.id);
+      
+      const cRes = await listCoursesAction(selectedProgram.id);
+      if (cRes.courses) {
+        setCourses(cRes.courses);
+        if (cRes.courses.length > 0) {
+          handleSelectCourse(cRes.courses[cRes.courses.length - 1].id);
+        }
+      }
     }
     setLoading(false);
   };
 
-  const toggleNode = (nodeId: string) => {
-    setExpandedNodes(prev => ({
-      ...prev,
-      [nodeId]: !prev[nodeId]
-    }));
+  // Course Edit handler
+  const handleCourseEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCourse || !selectedProgram) return;
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    const res = await updateCourseAction(editingCourse.id, {
+      title: courseForm.title,
+      slug: courseForm.slug,
+      duration_minutes: Number(courseForm.duration_minutes)
+    });
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess("Course updated successfully!");
+      setCourseModalOpen(false);
+      setEditingCourse(null);
+      const cRes = await listCoursesAction(selectedProgram.id);
+      if (cRes.courses) setCourses(cRes.courses);
+    }
+    setLoading(false);
+  };
+
+  // Module Submit handler
+  const handleModuleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCourseId) return;
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    let res;
+    if (editingModule) {
+      res = await updateModuleAction(editingModule.id, {
+        title: moduleForm.title,
+        position: Number(moduleForm.position)
+      });
+    } else {
+      res = await createModuleAction({
+        course_id: selectedCourseId,
+        title: moduleForm.title,
+        position: Number(moduleForm.position),
+        tenant_id: selectedInstId,
+        institution_id: selectedInstId
+      });
+    }
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess("Module saved successfully!");
+      setModuleModalOpen(false);
+      setEditingModule(null);
+      await refreshModules(selectedCourseId);
+    }
+    setLoading(false);
+  };
+
+  // Lesson Submit handler
+  const handleLessonSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetModuleId || !selectedCourseId) return;
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    let res;
+    if (editingLesson) {
+      res = await updateLessonAction(editingLesson.id, {
+        title: lessonForm.title,
+        duration: Number(lessonForm.duration),
+        position: Number(lessonForm.position)
+      });
+    } else {
+      res = await createLessonAction({
+        module_id: targetModuleId,
+        title: lessonForm.title,
+        lesson_type_id: defaultLessonTypeId,
+        duration: Number(lessonForm.duration),
+        position: Number(lessonForm.position),
+        status_id: defaultStatusId,
+        tenant_id: selectedInstId,
+        institution_id: selectedInstId
+      });
+    }
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess("Lesson saved successfully!");
+      setLessonModalOpen(false);
+      setEditingLesson(null);
+      await refreshLessons(targetModuleId);
+    }
+    setLoading(false);
+  };
+
+  // Resource Submit handler
+  const handleResourceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!targetLessonId) return;
+    setLoading(true);
+    setError("");
+    setSuccess("");
+
+    const res = await createLessonResourceAction({
+      lesson_id: targetLessonId,
+      title: resourceForm.title,
+      resource_type: resourceForm.resource_type,
+      external_url: resourceForm.resource_type === "link" ? resourceForm.external_url : undefined,
+      file_url: resourceForm.resource_type === "file" ? resourceForm.file_url : undefined,
+      position: 1,
+      tenant_id: selectedInstId,
+      institution_id: selectedInstId
+    });
+
+    if (res.error) {
+      setError(res.error);
+    } else {
+      setSuccess("Resource attached successfully!");
+      setResourceModalOpen(false);
+      await refreshResources(targetLessonId);
+    }
+    setLoading(false);
+  };
+
+  const renderExplorerMode = () => {
+    return (
+      <div className="space-y-6">
+        <div className="bg-white border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm">
+          <div className="bg-slate-50 px-6 py-4 border-b border-[#d2d2d7] flex items-center justify-between">
+            <h4 className="text-xs font-bold text-[#1d1d1f] uppercase tracking-wider">Ongoing Academic Programs</h4>
+            <button
+              onClick={() => {
+                setProgramForm({ title: "", slug: "", description: "" });
+                setProgramModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 bg-[#0066cc] text-white px-3.5 py-1.5 rounded-lg hover:bg-[#0066cc]/95 transition-all text-xs font-semibold shadow-sm cursor-pointer"
+            >
+              <Plus size={14} /> Register Program
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50/40 border-b border-[#d2d2d7] font-bold text-[#86868b]">
+                  <th className="px-6 py-3">Program Pathway</th>
+                  <th className="px-6 py-3">Timeline Details</th>
+                  <th className="px-6 py-3">Status</th>
+                  <th className="px-6 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#d2d2d7]">
+                {programs.length > 0 ? (
+                  programs.map((prog) => {
+                    const startedDate = new Date(prog.created_at);
+
+                    return (
+                      <tr key={prog.id} className="hover:bg-slate-50/20 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="font-bold text-[#1d1d1f] text-sm">{prog.title}</div>
+                          <div className="text-[#86868b] mt-0.5 max-w-sm truncate">{prog.description || "No pathway description provided."}</div>
+                          <span className="inline-flex mt-1.5 px-2 py-0.5 bg-slate-100 rounded text-[10px] font-mono text-[#86868b]">/{prog.slug}</span>
+                        </td>
+                        <td className="px-6 py-4 text-[#86868b] leading-normal font-medium">
+                          <div className="flex items-center gap-1.5 text-[11px]">
+                            <Calendar size={11} className="text-[#86868b]" />
+                            <span>Registered: {startedDate.toLocaleDateString()}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20">
+                            Active
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            onClick={async () => {
+                              if (confirm("Are you sure you want to delete this live academic program?")) {
+                                const res = await deleteProgramAction(prog.id);
+                                if (res.error) setError(res.error);
+                                else {
+                                  setSuccess("Academic Program deleted.");
+                                  const reloadRes = await listProgramsAction(selectedInstId);
+                                  if (reloadRes.programs) setPrograms(reloadRes.programs);
+                                }
+                              }
+                            }}
+                            className="p-1.5 bg-red-50 hover:bg-red-100 rounded-lg text-red-500 hover:text-red-700 transition-colors cursor-pointer"
+                            title="Delete Program"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-10 text-center text-[#86868b] font-medium">
+                      No active academic programs found.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderExamineMode = () => {
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        {/* Left selector column */}
+        <div className="lg:col-span-4 bg-white border border-[#d2d2d7] rounded-xl p-4 shadow-sm space-y-4">
+          <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#86868b]">Select Program pathway</h4>
+          
+          <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+            {programs.length > 0 ? (
+              programs.map((prog) => (
+                <div
+                  key={prog.id}
+                  onClick={() => setSelectedProgram(prog)}
+                  className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                    selectedProgram?.id === prog.id
+                      ? "bg-[#0066cc]/10 border-[#0066cc]/30 text-[#0066cc]"
+                      : "bg-slate-50/50 hover:bg-slate-50 border-[#d2d2d7] text-[#1d1d1f]"
+                  }`}
+                >
+                  <div className="min-w-0 pr-2">
+                    <p className="font-semibold truncate">{prog.title}</p>
+                    <p className="text-[10px] text-[#86868b] font-mono truncate">/{prog.slug}</p>
+                  </div>
+                  <ChevronRight size={13} className={selectedProgram?.id === prog.id ? "text-[#0066cc]" : "text-[#86868b]"} />
+                </div>
+              ))
+            ) : (
+              <p className="text-[11px] text-[#86868b] text-center py-4 bg-slate-50/50 rounded-lg">No active programs found.</p>
+            )}
+          </div>
+
+          {selectedProgram && (
+            <div className="border-t border-[#d2d2d7] pt-4 mt-2 space-y-3">
+              <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#86868b] flex items-center gap-1">
+                <Sparkles size={11} className="text-[#0066cc]" /> Clone Course Blueprint
+              </h4>
+              <select
+                value={selectedBlueprintId}
+                onChange={(e) => setSelectedBlueprintId(e.target.value)}
+                className="w-full bg-white border border-[#d2d2d7] rounded-lg px-2.5 py-1.5 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0066cc] shadow-sm"
+              >
+                <option value="">-- Choose Library Template --</option>
+                {blueprints.map((bp) => {
+                  const isAlreadyCloned = courses.some(c => c.source_template_id === bp.id);
+                  return (
+                    <option key={bp.id} value={bp.id} disabled={isAlreadyCloned}>
+                      {bp.title} {isAlreadyCloned ? "(Already Cloned)" : ""}
+                    </option>
+                  );
+                })}
+              </select>
+              <button
+                onClick={handleInstantiation}
+                disabled={loading || !selectedBlueprintId}
+                className="w-full bg-[#0066cc] text-white py-1.5 rounded-lg text-[11px] font-bold hover:bg-[#0066cc]/95 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                {loading ? "Cloning..." : "Instantiate to Program"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Right workspace details column */}
+        <div className="lg:col-span-8 space-y-6">
+          {selectedProgram ? (
+            <div className="space-y-6">
+              
+              {/* Courses list */}
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#86868b]">Instantiated Courses</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {courses.length > 0 ? (
+                    courses.map((course) => (
+                      <div
+                        key={course.id}
+                        onClick={() => handleSelectCourse(course.id)}
+                        className={`p-4 rounded-xl border text-xs cursor-pointer transition-all flex flex-col justify-between h-28 shadow-sm relative group ${
+                          selectedCourseId === course.id
+                            ? "bg-[#0066cc]/5 border-[#0066cc] text-[#0066cc] ring-1 ring-[#0066cc]"
+                            : "bg-white border-[#d2d2d7] hover:border-[#86868b] text-[#1d1d1f]"
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-xs truncate max-w-[80%]">{course.title}</span>
+                            <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingCourse(course);
+                                  setCourseForm({ title: course.title, slug: course.slug, duration_minutes: course.duration_minutes || 60 });
+                                  setCourseModalOpen(true);
+                                }}
+                                className="p-0.5 hover:bg-slate-100 rounded text-slate-500 hover:text-[#0066cc]"
+                                title="Edit Course"
+                              >
+                                <Edit size={12} />
+                              </button>
+                            </div>
+                          </div>
+                          <span className="inline-block mt-1 text-[9px] px-1.5 py-0.5 bg-slate-100 rounded text-[#86868b] font-mono">
+                            /{course.slug}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-[#86868b] pt-2 border-t border-slate-100 mt-2">
+                          <span className="font-semibold">{course.duration_minutes || 0} Minutes</span>
+                          <span className="text-[8px] bg-slate-100 px-1 rounded uppercase font-bold text-[#86868b] font-mono">
+                            {course.course_type_id ? "Syllabus Course" : "Live Blueprint"}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="sm:col-span-2 bg-slate-50 border border-dashed border-[#d2d2d7] rounded-xl py-8 text-center text-xs text-[#86868b]">
+                      No active courses instantiated. Select a blueprint template from the left pane to clone.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Modules list of selected course */}
+              {selectedCourseId && (
+                <div className="bg-white border border-[#d2d2d7] rounded-xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#86868b]">Syllabus Curriculum Modules</h4>
+                    <button
+                      onClick={() => {
+                        setEditingModule(null);
+                        setModuleForm({ title: "", position: (modulesCache[selectedCourseId]?.length || 0) + 1 });
+                        setModuleModalOpen(true);
+                      }}
+                      className="flex items-center gap-1 text-[#0066cc] hover:underline text-[11px] font-bold cursor-pointer"
+                    >
+                      <Plus size={12} /> Add Module
+                    </button>
+                  </div>
+
+                  {modulesLoading[selectedCourseId] ? (
+                    <div className="py-8 text-center text-xs text-[#86868b] font-medium">
+                      Loading syllabus modules...
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {modulesCache[selectedCourseId] && modulesCache[selectedCourseId].length > 0 ? (
+                        modulesCache[selectedCourseId].map((mod) => {
+                          const isModExpanded = !!expandedModules[mod.id];
+                          const hasLessons = lessonsCache[mod.id] && lessonsCache[mod.id].length > 0;
+
+                          return (
+                            <div key={mod.id} className="border border-[#d2d2d7] rounded-lg overflow-hidden text-xs bg-slate-50/10">
+                              
+                              {/* Module Expand Toggle Header */}
+                              <div
+                                className="px-4 py-2.5 flex items-center justify-between hover:bg-slate-50 cursor-pointer select-none bg-white font-semibold text-[#1d1d1f] border-b border-slate-100"
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1" onClick={() => toggleModuleExpand(mod.id)}>
+                                  {isModExpanded ? <ChevronDown size={13} className="text-[#86868b]" /> : <ChevronRight size={13} className="text-[#86868b]" />}
+                                  <span>Module {mod.position}: {mod.title}</span>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                  <button
+                                    onClick={() => {
+                                      setEditingModule(mod);
+                                      setModuleForm({ title: mod.title, position: mod.position || 1 });
+                                      setModuleModalOpen(true);
+                                    }}
+                                    className="text-[#86868b] hover:text-[#1d1d1f] p-0.5 hover:bg-slate-100 rounded"
+                                    title="Edit Module"
+                                  >
+                                    <Edit size={12} />
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (confirm("Delete this module and all its lessons?")) {
+                                        const delRes = await deleteModuleAction(mod.id);
+                                        if (delRes.error) setError(delRes.error);
+                                        else await refreshModules(selectedCourseId);
+                                      }
+                                    }}
+                                    className="text-red-500 hover:text-red-700 p-0.5 hover:bg-slate-100 rounded"
+                                    title="Delete Module"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                  <span className="text-[9px] text-[#86868b] font-mono bg-slate-100 px-1 rounded shrink-0">
+                                    {lessonsCache[mod.id]?.length !== undefined ? `${lessonsCache[mod.id].length} Lessons` : "View Lessons"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Lessons container */}
+                              {isModExpanded && (
+                                <div className="p-3 pl-6 space-y-2 bg-slate-50/30 border-t border-slate-50">
+                                  <div className="flex justify-end mb-1">
+                                    <button
+                                      onClick={() => {
+                                        setTargetModuleId(mod.id);
+                                        setEditingLesson(null);
+                                        setLessonForm({ title: "", duration: 30, position: (lessonsCache[mod.id]?.length || 0) + 1 });
+                                        setLessonModalOpen(true);
+                                      }}
+                                      className="flex items-center gap-1 text-[#0066cc] hover:underline text-[10px] font-bold cursor-pointer"
+                                    >
+                                      <Plus size={11} /> Add Lesson
+                                    </button>
+                                  </div>
+
+                                  {lessonsLoading[mod.id] ? (
+                                    <div className="text-[10px] text-[#86868b] py-2 italic">Loading lessons...</div>
+                                  ) : hasLessons ? (
+                                    lessonsCache[mod.id].map((les) => {
+                                      const isLesExpanded = !!expandedLessons[les.id];
+                                      const hasResources = resourcesCache[les.id] && resourcesCache[les.id].length > 0;
+
+                                      return (
+                                        <div key={les.id} className="border border-slate-200 rounded-lg p-2.5 bg-white space-y-2">
+                                          
+                                          {/* Lesson node header */}
+                                          <div
+                                            className="flex items-center justify-between cursor-pointer select-none"
+                                          >
+                                            <div className="flex items-center gap-1.5 min-w-0 flex-1" onClick={() => toggleLessonExpand(les.id)}>
+                                              {isLesExpanded ? <ChevronDown size={12} className="text-[#86868b]" /> : <ChevronRight size={12} className="text-[#86868b]" />}
+                                              <span className="font-medium text-[#1d1d1f] truncate">{les.title}</span>
+                                              <span className="text-[8px] bg-slate-100 text-[#86868b] px-1 rounded uppercase font-mono font-bold shrink-0">{les.lesson_type?.code || "lesson"}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2.5 shrink-0">
+                                              <span className="text-[10px] text-[#86868b] font-mono shrink-0">{les.duration || 0} mins</span>
+                                              <button
+                                                onClick={() => {
+                                                  setTargetModuleId(mod.id);
+                                                  setEditingLesson(les);
+                                                  setLessonForm({ title: les.title, duration: les.duration || 30, position: les.position || 1 });
+                                                  setLessonModalOpen(true);
+                                                }}
+                                                className="text-[#86868b] hover:text-[#1d1d1f] p-0.5 hover:bg-slate-100 rounded"
+                                                title="Edit Lesson"
+                                              >
+                                                <Edit size={11} />
+                                              </button>
+                                              <button
+                                                onClick={async () => {
+                                                  if (confirm("Delete this lesson?")) {
+                                                    const delRes = await deleteLessonAction(les.id);
+                                                    if (delRes.error) setError(delRes.error);
+                                                    else await refreshLessons(mod.id);
+                                                  }
+                                                }}
+                                                className="text-red-500 hover:text-red-700 p-0.5 hover:bg-slate-100 rounded"
+                                                title="Delete Lesson"
+                                              >
+                                                <Trash2 size={11} />
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          {/* Lesson resources list (lazy loaded) */}
+                                          {isLesExpanded && (
+                                            <div className="border-t border-slate-100 pt-2 mt-2 space-y-1 pl-4">
+                                              <div className="flex justify-end mb-1.5">
+                                                <button
+                                                  onClick={() => {
+                                                    setTargetLessonId(les.id);
+                                                    setResourceForm({ title: "", resource_type: "link", external_url: "", file_url: "" });
+                                                    setResourceModalOpen(true);
+                                                  }}
+                                                  className="flex items-center gap-1 text-[#0066cc] hover:underline text-[9px] font-bold cursor-pointer"
+                                                >
+                                                  <Plus size={10} /> Add Resource
+                                                </button>
+                                              </div>
+                                              {resourcesCache[les.id] ? (
+                                                hasResources ? (
+                                                  resourcesCache[les.id].map((res: any) => (
+                                                    <div key={res.id} className="flex items-center justify-between text-[10px] text-[#86868b] py-1 bg-slate-50 px-2 rounded">
+                                                      <div className="flex items-center gap-1.5 min-w-0">
+                                                        <FileText size={10} className="shrink-0" />
+                                                        <span className="truncate">{res.title}</span>
+                                                        <span className="text-[8px] bg-slate-200 text-[#86868b] px-1 rounded uppercase font-bold shrink-0">{res.resource_type}</span>
+                                                      </div>
+                                                      <button
+                                                        onClick={async () => {
+                                                          if (confirm("Delete this resource?")) {
+                                                            const delRes = await deleteLessonResourceAction(res.id);
+                                                            if (delRes.error) setError(delRes.error);
+                                                            else await refreshResources(les.id);
+                                                          }
+                                                        }}
+                                                        className="text-red-500 hover:text-red-700 p-0.5 hover:bg-slate-100 rounded"
+                                                        title="Delete Resource"
+                                                      >
+                                                        <Trash2 size={11} />
+                                                      </button>
+                                                    </div>
+                                                  ))
+                                                ) : (
+                                                  <p className="text-[9px] text-[#86868b] italic">No resources attached to this lesson.</p>
+                                                )
+                                              ) : (
+                                                <p className="text-[9px] text-[#86868b] italic">Loading resource attachments...</p>
+                                              )}
+                                            </div>
+                                          )}
+
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <p className="text-[10px] text-[#86868b] italic">No lessons in this module.</p>
+                                  )}
+                                </div>
+                              )}
+
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="text-center py-6 text-[#86868b] italic">
+                          No curriculum modules defined.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                </div>
+              )}
+
+            </div>
+          ) : (
+            <div className="bg-white border border-[#d2d2d7] rounded-xl p-12 text-center text-xs text-[#86868b] shadow-sm">
+              <Folder className="mx-auto mb-2 text-[#86868b]/40" size={32} />
+              <p className="font-semibold text-[#1d1d1f]">Select a program from the left pane</p>
+              <p className="mt-1">Inspect course listings and navigate modular curriculum topics.</p>
+            </div>
+          )}
+        </div>
+
+      </div>
+    );
   };
 
   return (
     <div className="space-y-6">
       
-      {/* Top selection banner */}
-      <div className="bg-white border border-[#E2E8F0] p-6 rounded-xl shadow-sm">
-        <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#475569] flex items-center gap-1.5">
-          <Folder size={15} className="text-[#2563EB]" /> Live Program Scope
+      {/* Scope banner */}
+      <div className="bg-white border border-[#d2d2d7] p-6 rounded-xl shadow-sm">
+        <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#86868b] flex items-center gap-1.5">
+          <Folder size={15} className="text-[#0066cc]" /> Live Program Scope
         </h3>
-        <p className="text-xs text-[#475569] mb-4">
-          Select an institution to create or manage run-time Academic Programs and duplicate course blueprints.
+        <p className="text-xs text-[#86868b] mb-4">
+          Select an institution scope below to explore registered programs and instantiated syllabus courses.
         </p>
         <select
           value={selectedInstId}
           onChange={(e) => setSelectedInstId(e.target.value)}
-          className="w-full max-w-md bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+          className="w-full max-w-md bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
         >
           <option value="">-- Select Institution Campus --</option>
           {institutions.map((inst) => (
@@ -205,259 +877,38 @@ export default function ProgramManager({ institutions }: ProgramManagerProps) {
         </select>
       </div>
 
-      {selectedInstId && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* Programs column */}
-          <div className="lg:col-span-1 bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
-                <Folder size={14} className="text-[#2563EB]" /> Live Programs
-              </h4>
-              <button
-                onClick={() => {
-                  setProgramForm({ title: "", slug: "", description: "" });
-                  setProgramModalOpen(true);
-                }}
-                className="flex items-center gap-1 bg-[#2563EB] text-white px-2 py-1 rounded-lg hover:bg-[#2563EB]/95 transition-all text-[10px] font-bold shadow-sm"
-              >
-                <Plus size={12} /> Create Program
-              </button>
-            </div>
-
-            <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-              {programs.length > 0 ? (
-                programs.map((prog) => (
-                  <div
-                    key={prog.id}
-                    onClick={() => setSelectedProgram(prog)}
-                    className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
-                      selectedProgram?.id === prog.id
-                        ? "bg-[#2563EB]/10 border-[#2563EB]/30 text-[#2563EB]"
-                        : "bg-slate-50/50 hover:bg-slate-50 border-[#E2E8F0] text-[#0F172A]"
-                    }`}
-                  >
-                    <div className="min-w-0 pr-2">
-                      <p className="font-semibold truncate">{prog.title}</p>
-                      <p className="text-[10px] text-[#475569] font-mono truncate">/{prog.slug}</p>
-                    </div>
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (confirm("Are you sure you want to delete this live academic program?")) {
-                          const res = await deleteProgramAction(prog.id);
-                          if (res.error) setError(res.error);
-                          else {
-                            setSuccess("Academic Program deleted.");
-                            if (selectedProgram?.id === prog.id) setSelectedProgram(null);
-                            const reloadRes = await listProgramsAction(selectedInstId);
-                            if (reloadRes.programs) setPrograms(reloadRes.programs);
-                          }
-                        }
-                      }}
-                      className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-700"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <p className="text-[11px] text-[#475569] text-center py-4 bg-slate-50/50 rounded-lg">No active programs found.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Program Tree Structure Viewer & Blueprint Instantiation Workspace */}
-          <div className="lg:col-span-2 space-y-6">
-            {selectedProgram ? (
-              <div className="space-y-6">
-                
-                {/* Instantiate Blueprint Banner */}
-                <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-4">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
-                    <PlusCircle size={15} className="text-[#2563EB]" /> Instantiate Template Course
-                  </h4>
-                  <p className="text-xs text-[#475569]">
-                    Select a reusable Course Template from the Library and clone it into this live Program. This will create a local copy storing its traceability history.
-                  </p>
-                  
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                    <select
-                      value={selectedBlueprintId}
-                      onChange={(e) => setSelectedBlueprintId(e.target.value)}
-                      className="flex-1 bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
-                    >
-                      <option value="">-- Choose Library Template --</option>
-                      {blueprints.map((bp) => (
-                        <option key={bp.id} value={bp.id}>
-                          {bp.title} (Slug: {bp.slug})
-                        </option>
-                      ))}
-                    </select>
-
-                    <button
-                      onClick={handleInstantiation}
-                      disabled={loading || !selectedBlueprintId}
-                      className="bg-[#2563EB] text-white px-4 py-2 rounded-lg font-semibold hover:bg-[#2563EB]/95 transition-all text-xs disabled:opacity-50 shadow-sm shrink-0"
-                    >
-                      {loading ? "Instantiating..." : "Clone Template"}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Tree Structure Viewer */}
-                <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-4">
-                  <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A]">
-                      Academic Course Tree Viewer
-                    </h4>
-                    <span className="text-[10px] text-[#475569] font-medium">Reads exclusively from runtime tables</span>
-                  </div>
-
-                  <div className="space-y-3">
-                    {treeCourses.length > 0 ? (
-                      treeCourses.map((course) => {
-                        const isCourseExpanded = expandedNodes[course.id];
-                        return (
-                          <div key={course.id} className="border border-[#E2E8F0] rounded-xl overflow-hidden shadow-xs bg-slate-50/10">
-                            
-                            {/* Course Node */}
-                            <div 
-                              onClick={() => toggleNode(course.id)}
-                              className="px-4 py-3 flex items-center justify-between hover:bg-slate-50/50 cursor-pointer select-none border-b border-[#E2E8F0]/50"
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                {isCourseExpanded ? <ChevronDown size={14} className="text-[#475569]" /> : <ChevronRight size={14} className="text-[#475569]" />}
-                                <BookOpen size={14} className="text-[#2563EB]" />
-                                <span className="font-bold text-xs text-[#0F172A] truncate">{course.title}</span>
-                                {course.source_template_id && (
-                                  <span className="text-[8px] bg-sky-50 text-[#2563EB] px-1.5 py-0.5 rounded border border-sky-100 font-mono tracking-tighter" title={`Cloned from blueprint template: ${course.source_template_id}`}>
-                                    Blueprint ID: {course.source_template_id.substring(0, 8)}...
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-[#475569] font-mono">{course.duration_minutes || 0} mins</span>
-                            </div>
-
-                            {/* Modules Container */}
-                            {isCourseExpanded && (
-                              <div className="p-3 pl-6 space-y-3 border-t border-[#E2E8F0]/30 bg-slate-50/5">
-                                {course.modules && course.modules.length > 0 ? (
-                                  course.modules.map((mod: any) => {
-                                    const isModExpanded = expandedNodes[mod.id];
-                                    return (
-                                      <div key={mod.id} className="border border-[#E2E8F0] rounded-lg overflow-hidden bg-white">
-                                        
-                                        {/* Module Node */}
-                                        <div 
-                                          onClick={() => toggleNode(mod.id)}
-                                          className="px-3 py-2 flex items-center justify-between hover:bg-slate-50/50 cursor-pointer select-none"
-                                        >
-                                          <div className="flex items-center gap-2 min-w-0">
-                                            {isModExpanded ? <ChevronDown size={12} className="text-[#475569]" /> : <ChevronRight size={12} className="text-[#475569]" />}
-                                            <span className="font-semibold text-xs text-[#0F172A] truncate">Module {mod.position}: {mod.title}</span>
-                                          </div>
-                                          <span className="text-[9px] text-[#475569] font-mono bg-slate-100 px-1 rounded">{mod.lessons?.length || 0} Lessons</span>
-                                        </div>
-
-                                        {/* Lessons Container */}
-                                        {isModExpanded && (
-                                          <div className="p-3 pl-6 space-y-2.5 border-t border-[#E2E8F0]/50 bg-slate-50/20">
-                                            {mod.lessons && mod.lessons.length > 0 ? (
-                                              mod.lessons.map((les: any) => {
-                                                const isLesExpanded = expandedNodes[les.id];
-                                                return (
-                                                  <div key={les.id} className="border border-[#E2E8F0]/50 rounded-lg p-2.5 bg-white space-y-2">
-                                                    
-                                                    {/* Lesson Node */}
-                                                    <div 
-                                                      onClick={() => toggleNode(les.id)}
-                                                      className="flex items-center justify-between cursor-pointer select-none"
-                                                    >
-                                                      <div className="flex items-center gap-1.5 min-w-0">
-                                                        {isLesExpanded ? <ChevronDown size={11} className="text-[#475569]" /> : <ChevronRight size={11} className="text-[#475569]" />}
-                                                        <span className="font-medium text-xs text-[#0F172A] truncate">{les.title}</span>
-                                                        <span className="text-[8px] bg-slate-100 text-[#475569] px-1 rounded uppercase font-mono font-bold shrink-0">{les.lesson_type?.code || "lesson"}</span>
-                                                      </div>
-                                                      <span className="text-[10px] text-[#475569] font-mono shrink-0">{les.duration || 0} mins</span>
-                                                    </div>
-
-                                                    {/* Lesson Resources Node */}
-                                                    {isLesExpanded && (
-                                                      <div className="border-t border-[#E2E8F0] pt-2 mt-2 space-y-1 pl-4">
-                                                        {les.resources && les.resources.length > 0 ? (
-                                                          les.resources.map((res: any) => (
-                                                            <div key={res.id} className="flex items-center justify-between text-[10px] text-[#475569] py-1 bg-slate-50 px-2 rounded">
-                                                              <div className="flex items-center gap-1.5 min-w-0">
-                                                                <FileText size={10} className="shrink-0" />
-                                                                <span className="truncate">{res.title}</span>
-                                                                <span className="text-[8px] bg-slate-200 text-[#475569] px-1 rounded uppercase font-bold shrink-0">{res.resource_type}</span>
-                                                              </div>
-                                                            </div>
-                                                          ))
-                                                        ) : (
-                                                          <p className="text-[9px] text-[#475569] italic">No resources attached to this lesson.</p>
-                                                        )}
-                                                      </div>
-                                                    )}
-
-                                                  </div>
-                                                );
-                                              })
-                                            ) : (
-                                              <p className="text-[10px] text-[#475569] italic">No lessons inside this module.</p>
-                                            )}
-                                          </div>
-                                        )}
-
-                                      </div>
-                                    );
-                                  })
-                                ) : (
-                                  <p className="text-[10px] text-[#475569] italic">No modules inside this course.</p>
-                                )}
-                              </div>
-                            )}
-
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="bg-slate-50 border border-[#E2E8F0] border-dashed rounded-xl py-8 text-center text-xs text-[#475569]">
-                        <BookOpen className="mx-auto mb-2 text-[#475569]/30" size={24} />
-                        <p className="font-semibold text-[#0F172A]">No Academic Courses Instantiated</p>
-                        <p className="mt-1">Clone a template from the list above to populate live curriculum structures.</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </div>
-            ) : (
-              <div className="bg-white border border-[#E2E8F0] rounded-xl p-12 text-center text-xs text-[#475569] shadow-sm">
-                <Folder className="mx-auto mb-2 text-[#475569]/40" size={32} />
-                <p className="font-semibold text-[#0F172A]">Select a Program</p>
-                <p className="mt-1">Instantiate course blueprints and visualize live curriculum trees for academic pathways.</p>
-              </div>
-            )}
-          </div>
-
+      {/* Global alert messages */}
+      {error && (
+        <div className="bg-[#DC2626]/5 border border-[#DC2626]/20 text-[#DC2626] rounded-xl p-4 text-xs flex items-start gap-2">
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
         </div>
+      )}
+
+      {success && (
+        <div className="bg-[#16A34A]/5 border border-[#16A34A]/20 text-[#16A34A] rounded-xl p-4 text-xs flex items-start gap-2">
+          <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
+          <span>{success}</span>
+        </div>
+      )}
+
+      {selectedInstId && (
+        mode === "explorer" ? renderExplorerMode() : renderExamineMode()
       )}
 
       {/* Program Create Modal */}
       {programModalOpen && (
-        <div className="fixed inset-0 bg-[#0F172A]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col text-xs text-[#0F172A]">
-            <div className="bg-slate-50 px-6 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
-              <h3 className="font-bold text-sm text-[#0F172A]">Create New Program</h3>
-              <button onClick={() => setProgramModalOpen(false)} className="text-[#475569] hover:text-[#0F172A] p-1.5">
+        <div className="fixed inset-0 bg-[#1d1d1f]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col text-xs text-[#1d1d1f] animate-fadeIn">
+            <div className="bg-slate-50 px-6 py-4 border-b border-[#d2d2d7] flex items-center justify-between">
+              <h3 className="font-bold text-sm text-[#1d1d1f]">Create New Program</h3>
+              <button onClick={() => setProgramModalOpen(false)} className="text-[#86868b] hover:text-[#1d1d1f] p-1.5 cursor-pointer">
                 <X size={16} />
               </button>
             </div>
             <form onSubmit={handleProgramSubmit} className="p-6 space-y-4">
               <div>
-                <label className="block font-semibold mb-1 text-[#475569]">Program Title *</label>
+                <label className="block font-semibold mb-1 text-[#86868b]">Program Title *</label>
                 <input
                   type="text"
                   placeholder="e.g. AI Foundations"
@@ -469,40 +920,277 @@ export default function ProgramManager({ institutions }: ProgramManagerProps) {
                       slug: e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)+/g, "")
                     });
                   }}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                   required
                 />
               </div>
 
               <div>
-                <label className="block font-semibold mb-1 text-[#475569]">Program Slug *</label>
+                <label className="block font-semibold mb-1 text-[#86868b]">Program Slug *</label>
                 <input
                   type="text"
                   placeholder="e.g. ai-foundations"
                   value={programForm.slug}
                   onChange={(e) => setProgramForm({ ...programForm, slug: e.target.value })}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm font-mono"
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-mono text-[#1d1d1f]"
                   required
                 />
               </div>
 
               <div>
-                <label className="block font-semibold mb-1 text-[#475569]">Description</label>
+                <label className="block font-semibold mb-1 text-[#86868b]">Description</label>
                 <textarea
                   placeholder="Program objectives, pathway roadmap..."
                   value={programForm.description}
                   onChange={(e) => setProgramForm({ ...programForm, description: e.target.value })}
                   rows={3}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm resize-none"
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm resize-none text-[#1d1d1f]"
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#E2E8F0]">
-                <button type="button" onClick={() => setProgramModalOpen(false)} className="px-4 py-2 rounded-lg border border-[#E2E8F0] hover:bg-slate-50 font-semibold">
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#d2d2d7]">
+                <button type="button" onClick={() => setProgramModalOpen(false)} className="px-4 py-2 rounded-lg border border-[#d2d2d7] hover:bg-slate-50 font-semibold cursor-pointer">
                   Cancel
                 </button>
-                <button type="submit" disabled={loading} className="bg-[#2563EB] text-white px-4 py-2 rounded-lg font-semibold hover:bg-[#2563EB]/95 transition-colors disabled:opacity-50">
+                <button type="submit" disabled={loading} className="bg-[#0066cc] text-white px-4 py-2 rounded-lg font-semibold hover:bg-[#0066cc]/95 transition-colors disabled:opacity-50 cursor-pointer">
                   Save Program
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Course Edit Modal */}
+      {courseModalOpen && (
+        <div className="fixed inset-0 bg-[#1d1d1f]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col text-xs text-[#1d1d1f] animate-fadeIn">
+            <div className="bg-slate-50 px-6 py-4 border-b border-[#d2d2d7] flex items-center justify-between">
+              <h3 className="font-bold text-sm text-[#1d1d1f]">Edit Course Pathway</h3>
+              <button onClick={() => setCourseModalOpen(false)} className="text-[#86868b] hover:text-[#1d1d1f] p-1.5 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleCourseEditSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Course Title *</label>
+                <input
+                  type="text"
+                  value={courseForm.title}
+                  onChange={(e) => setCourseForm({ ...courseForm, title: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Course Slug *</label>
+                <input
+                  type="text"
+                  value={courseForm.slug}
+                  onChange={(e) => setCourseForm({ ...courseForm, slug: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-mono text-[#1d1d1f]"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Duration (Minutes) *</label>
+                <input
+                  type="number"
+                  value={courseForm.duration_minutes}
+                  onChange={(e) => setCourseForm({ ...courseForm, duration_minutes: Number(e.target.value) })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#d2d2d7]">
+                <button type="button" onClick={() => setCourseModalOpen(false)} className="px-4 py-2 rounded-lg border border-[#d2d2d7] hover:bg-slate-50 font-semibold cursor-pointer">
+                  Cancel
+                </button>
+                <button type="submit" disabled={loading} className="bg-[#0066cc] text-white px-4 py-2 rounded-lg font-semibold hover:bg-[#0066cc]/95 transition-colors disabled:opacity-50 cursor-pointer">
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Module Create/Edit Modal */}
+      {moduleModalOpen && (
+        <div className="fixed inset-0 bg-[#1d1d1f]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col text-xs text-[#1d1d1f] animate-fadeIn">
+            <div className="bg-slate-50 px-6 py-4 border-b border-[#d2d2d7] flex items-center justify-between">
+              <h3 className="font-bold text-sm text-[#1d1d1f]">{editingModule ? "Edit Module" : "Create New Module"}</h3>
+              <button onClick={() => setModuleModalOpen(false)} className="text-[#86868b] hover:text-[#1d1d1f] p-1.5 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleModuleSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Module Title *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Getting Started"
+                  value={moduleForm.title}
+                  onChange={(e) => setModuleForm({ ...moduleForm, title: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Position Order *</label>
+                <input
+                  type="number"
+                  value={moduleForm.position}
+                  onChange={(e) => setModuleForm({ ...moduleForm, position: Number(e.target.value) })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#d2d2d7]">
+                <button type="button" onClick={() => setModuleModalOpen(false)} className="px-4 py-2 rounded-lg border border-[#d2d2d7] hover:bg-slate-50 font-semibold cursor-pointer">
+                  Cancel
+                </button>
+                <button type="submit" disabled={loading} className="bg-[#0066cc] text-white px-4 py-2 rounded-lg font-semibold hover:bg-[#0066cc]/95 transition-colors disabled:opacity-50 cursor-pointer">
+                  Save Module
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Lesson Create/Edit Modal */}
+      {lessonModalOpen && (
+        <div className="fixed inset-0 bg-[#1d1d1f]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col text-xs text-[#1d1d1f] animate-fadeIn">
+            <div className="bg-slate-50 px-6 py-4 border-b border-[#d2d2d7] flex items-center justify-between">
+              <h3 className="font-bold text-sm text-[#1d1d1f]">{editingLesson ? "Edit Lesson" : "Create New Lesson"}</h3>
+              <button onClick={() => setLessonModalOpen(false)} className="text-[#86868b] hover:text-[#1d1d1f] p-1.5 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleLessonSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Lesson Title *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 1.1 Intro to Layouts"
+                  value={lessonForm.title}
+                  onChange={(e) => setLessonForm({ ...lessonForm, title: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-semibold mb-1 text-[#86868b]">Duration (Minutes) *</label>
+                  <input
+                    type="number"
+                    value={lessonForm.duration}
+                    onChange={(e) => setLessonForm({ ...lessonForm, duration: Number(e.target.value) })}
+                    className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-[#86868b]">Position Order *</label>
+                  <input
+                    type="number"
+                    value={lessonForm.position}
+                    onChange={(e) => setLessonForm({ ...lessonForm, position: Number(e.target.value) })}
+                    className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#d2d2d7]">
+                <button type="button" onClick={() => setLessonModalOpen(false)} className="px-4 py-2 rounded-lg border border-[#d2d2d7] hover:bg-slate-50 font-semibold cursor-pointer">
+                  Cancel
+                </button>
+                <button type="submit" disabled={loading} className="bg-[#0066cc] text-white px-4 py-2 rounded-lg font-semibold hover:bg-[#0066cc]/95 transition-colors disabled:opacity-50 cursor-pointer">
+                  Save Lesson
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Resource Attachment Modal */}
+      {resourceModalOpen && (
+        <div className="fixed inset-0 bg-[#1d1d1f]/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col text-xs text-[#1d1d1f] animate-fadeIn">
+            <div className="bg-slate-50 px-6 py-4 border-b border-[#d2d2d7] flex items-center justify-between">
+              <h3 className="font-bold text-sm text-[#1d1d1f]">Attach Lesson Resource</h3>
+              <button onClick={() => setResourceModalOpen(false)} className="text-[#86868b] hover:text-[#1d1d1f] p-1.5 cursor-pointer">
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleResourceSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Resource Title *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Reference Guide PDF"
+                  value={resourceForm.title}
+                  onChange={(e) => setResourceForm({ ...resourceForm, title: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Resource Type *</label>
+                <select
+                  value={resourceForm.resource_type}
+                  onChange={(e) => setResourceForm({ ...resourceForm, resource_type: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-2.5 py-1.5 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0066cc] shadow-sm"
+                >
+                  <option value="link">External URL Link</option>
+                  <option value="file">File Attachment</option>
+                </select>
+              </div>
+
+              {resourceForm.resource_type === "link" ? (
+                <div>
+                  <label className="block font-semibold mb-1 text-[#86868b]">External URL *</label>
+                  <input
+                    type="text"
+                    placeholder="https://github.com/..."
+                    value={resourceForm.external_url}
+                    onChange={(e) => setResourceForm({ ...resourceForm, external_url: e.target.value })}
+                    className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    required
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block font-semibold mb-1 text-[#86868b]">File Storage URL *</label>
+                  <input
+                    type="text"
+                    placeholder="https://storage.hynox.com/file.pdf"
+                    value={resourceForm.file_url}
+                    onChange={(e) => setResourceForm({ ...resourceForm, file_url: e.target.value })}
+                    className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    required
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#d2d2d7]">
+                <button type="button" onClick={() => setResourceModalOpen(false)} className="px-4 py-2 rounded-lg border border-[#d2d2d7] hover:bg-slate-50 font-semibold cursor-pointer">
+                  Cancel
+                </button>
+                <button type="submit" disabled={loading} className="bg-[#0066cc] text-white px-4 py-2 rounded-lg font-semibold hover:bg-[#0066cc]/95 transition-colors disabled:opacity-50 cursor-pointer">
+                  Attach Resource
                 </button>
               </div>
             </form>

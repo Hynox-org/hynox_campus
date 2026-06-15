@@ -108,34 +108,16 @@ export async function getSessionTenant() {
 // List all teachers/trainers for instructor selection
 export async function listTenantInstructors(tenantId: string) {
   const supabase = await createClient();
-  const { data: users, error } = await supabase
-    .schema("core")
-    .from("users")
-    .select(`
-      id,
-      full_name,
-      email,
-      user_roles (
-        role:role_id (
-          name
-        )
-      )
-    `)
-    .eq("tenant_id", tenantId)
-    .is("deleted_at", null);
+  
+  const { data, error } = await supabase
+    .rpc("get_tenant_teachers", { p_tenant_id: tenantId });
 
   if (error) {
-    console.error("Error fetching instructors:", error);
+    console.error("Error fetching instructors via RPC:", error);
     return [];
   }
 
-  // Filter users who have role 'teacher' or 'trainer'
-  const instructors = (users || []).filter((u: any) => {
-    const roles = u.user_roles?.map((ur: any) => ur.role?.name) || [];
-    return roles.includes("teacher") || roles.includes("trainer");
-  });
-
-  return instructors;
+  return data || [];
 }
 
 // ----------------------------------------------------

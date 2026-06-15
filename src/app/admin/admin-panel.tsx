@@ -8,7 +8,11 @@ import {
   regenerateInvitationAction,
   listInstitutionUsersAction,
   onboardSingleUserAction,
-  listInvitationsAction
+  listInvitationsAction,
+  listAllTeachersAction,
+  mapTeacherToInstitutionAction,
+  unmapTeacherFromInstitutionAction,
+  getTeacherInstitutionDetailsAction
 } from "@/app/actions/institution-actions";
 import { 
   createProgramAction,
@@ -75,7 +79,9 @@ import {
   Users,
   BookOpen,
   UserCheck,
-  Award
+  Award,
+  Menu,
+  X
 } from "lucide-react";
 import LibraryBuilder from "./library-builder";
 import ProgramManager from "./program-manager";
@@ -89,11 +95,20 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ adminEmail, initialInstitutions, initialInvitations = [] }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"institutions" | "assign" | "csv" | "onboarding" | "explorer" | "academics" | "library" | "programs" | "cohorts" | "enrollments" | "course_assignments" | "learning_manager">("institutions");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [activeParentTab, setActiveParentTab] = useState<"institutions" | "onboarding" | "library" | "programs" | "learning_manager">("institutions");
+  const [selectedUserDetail, setSelectedUserDetail] = useState<any | null>(null);
+
+  const [activeTab, setActiveTab] = useState<"institutions" | "add_institution" | "explorer" | "csv" | "onboarding" | "academics" | "library" | "programs" | "examine_programs" | "cohorts" | "enrollments" | "course_assignments" | "learning_manager" | "create_activity" | "view_activities" | "teacher_mapping">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
   const [inviteSearch, setInviteSearch] = useState("");
   const [inviteFilter, setInviteFilter] = useState<"all" | "pending" | "accepted" | "expired" | "failed" | "revoked">("all");
+  const [inviteInstitutionFilter, setInviteInstitutionFilter] = useState("all");
+  const [inviteRoleFilter, setInviteRoleFilter] = useState("all");
+  const [inviteDateFilter, setInviteDateFilter] = useState("all");
+  const [progSelectedInstId, setProgSelectedInstId] = useState("");
+  const [progSelectedProgram, setProgSelectedProgram] = useState<any | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
 
   // Institution Explorer states
@@ -102,6 +117,15 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [explorerLoading, setExplorerLoading] = useState(false);
   const [explorerSearch, setExplorerSearch] = useState("");
   const [explorerRoleFilter, setExplorerRoleFilter] = useState<"all" | "admin" | "teacher" | "student">("all");
+
+  // Teacher mapping states
+  const [teachersList, setTeachersList] = useState<any[]>([]);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
+  const [teacherSearch, setTeacherSearch] = useState("");
+  const [mappingInstId, setMappingInstId] = useState("");
+  const [selectedTeacherForDetail, setSelectedTeacherForDetail] = useState<any | null>(null);
+  const [teacherDetailsLoading, setTeacherDetailsLoading] = useState(false);
+  const [teacherInstDetails, setTeacherInstDetails] = useState<any[]>([]);
 
   const handleSelectInstitutionForExplorer = async (instId: string) => {
     setExplorerSelectedId(instId);
@@ -190,30 +214,46 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
       if (!searchMatch) return false;
 
       // 2. Status filter
-      if (inviteFilter === "all") return true;
-
       const now = new Date();
       const isExpired = inv.status === "expired" || (["pending", "created", "sent"].includes(inv.status) && new Date(inv.expires_at) < now);
 
-      if (inviteFilter === "accepted") {
-        return inv.status === "accepted";
+      if (inviteFilter !== "all") {
+        if (inviteFilter === "accepted" && inv.status !== "accepted") return false;
+        if (inviteFilter === "expired" && !isExpired) return false;
+        if (inviteFilter === "failed" && inv.status !== "failed") return false;
+        if (inviteFilter === "revoked" && inv.status !== "revoked") return false;
+        if (inviteFilter === "pending" && (!["pending", "created", "sent"].includes(inv.status) || isExpired)) return false;
       }
-      if (inviteFilter === "expired") {
-        return isExpired;
+
+      // 3. Institution filter
+      if (inviteInstitutionFilter !== "all" && inv.tenant_id !== inviteInstitutionFilter) {
+        return false;
       }
-      if (inviteFilter === "failed") {
-        return inv.status === "failed";
+
+      // 4. Role filter
+      if (inviteRoleFilter !== "all" && inv.invitation_type !== inviteRoleFilter) {
+        return false;
       }
-      if (inviteFilter === "revoked") {
-        return inv.status === "revoked";
-      }
-      if (inviteFilter === "pending") {
-        return ["pending", "created", "sent"].includes(inv.status) && !isExpired;
+
+      // 5. Date filter
+      if (inviteDateFilter !== "all") {
+        const createdDate = new Date(inv.created_at);
+        const diffTime = Math.abs(now.getTime() - createdDate.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (inviteDateFilter === "today") {
+          const isToday = createdDate.toDateString() === now.toDateString();
+          if (!isToday) return false;
+        } else if (inviteDateFilter === "7days" && diffDays > 7) {
+          return false;
+        } else if (inviteDateFilter === "30days" && diffDays > 30) {
+          return false;
+        }
       }
 
       return true;
     });
-  }, [invitations, inviteSearch, inviteFilter]);
+  }, [invitations, inviteSearch, inviteFilter, inviteInstitutionFilter, inviteRoleFilter, inviteDateFilter]);
 
   const computedExplorerStats = React.useMemo(() => {
     let admins = 0;
@@ -351,6 +391,105 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
     external_url: "",
     position: 1
   });
+
+  const loadAllTeachersData = async () => {
+    setLoadingTeachers(true);
+    const res = await listAllTeachersAction();
+    if (res.teachers) {
+      setTeachersList(res.teachers);
+    } else if (res.error) {
+      alert(res.error);
+    }
+    setLoadingTeachers(false);
+  };
+
+  const handleMapTeacher = async (userId: string, tenantId: string) => {
+    if (!tenantId) {
+      alert("Please select a target institution.");
+      return;
+    }
+    setLoadingTeachers(true);
+    const res = await mapTeacherToInstitutionAction(userId, tenantId);
+    if (res.success) {
+      alert("Teacher mapped successfully!");
+      // Fetch fresh teachers list first, then update selected teacher and details
+      const updatedTeacherRes = await listAllTeachersAction();
+      if (updatedTeacherRes.teachers) {
+        setTeachersList(updatedTeacherRes.teachers);
+        const latestTeacher = updatedTeacherRes.teachers.find((t: any) => t.id === userId);
+        if (latestTeacher) {
+          setSelectedTeacherForDetail(latestTeacher);
+          // Load detail rows
+          setTeacherDetailsLoading(true);
+          setTeacherInstDetails([]);
+          const detailsRes = await getTeacherInstitutionDetailsAction(userId);
+          if (detailsRes.details) {
+            setTeacherInstDetails(detailsRes.details);
+          }
+          setTeacherDetailsLoading(false);
+        }
+      } else {
+        loadAllTeachersData();
+      }
+    } else {
+      alert(res.error || "Failed to map teacher.");
+    }
+    setLoadingTeachers(false);
+  };
+
+  const handleUnmapTeacher = async (userId: string, tenantId: string) => {
+    if (!confirm("Are you sure you want to remove this institution mapping?")) {
+      return;
+    }
+    setLoadingTeachers(true);
+    const res = await unmapTeacherFromInstitutionAction(userId, tenantId);
+    if (res.success) {
+      alert("Teacher unmapped successfully!");
+      // Fetch fresh teachers list first, then update selected teacher and details
+      const updatedTeacherRes = await listAllTeachersAction();
+      if (updatedTeacherRes.teachers) {
+        setTeachersList(updatedTeacherRes.teachers);
+        const latestTeacher = updatedTeacherRes.teachers.find((t: any) => t.id === userId);
+        if (latestTeacher) {
+          setSelectedTeacherForDetail(latestTeacher);
+          setTeacherDetailsLoading(true);
+          setTeacherInstDetails([]);
+          const detailsRes = await getTeacherInstitutionDetailsAction(userId);
+          if (detailsRes.details) {
+            setTeacherInstDetails(detailsRes.details);
+          }
+          setTeacherDetailsLoading(false);
+        } else {
+          setSelectedTeacherForDetail(null);
+        }
+      } else {
+        loadAllTeachersData();
+      }
+    } else {
+      alert(res.error || "Failed to unmap teacher.");
+    }
+    setLoadingTeachers(false);
+  };
+
+  const loadTeacherDetailsData = async (teacher: any) => {
+    setSelectedTeacherForDetail(teacher);
+    setMappingInstId(""); // Reset mapping selection when loading a teacher
+    setTeacherDetailsLoading(true);
+    setTeacherInstDetails([]);
+    const res = await getTeacherInstitutionDetailsAction(teacher.id);
+    if (res.details) {
+      setTeacherInstDetails(res.details);
+    } else if (res.error) {
+      alert(res.error);
+    }
+    setTeacherDetailsLoading(false);
+  };
+
+  React.useEffect(() => {
+    if (activeTab === "teacher_mapping") {
+      loadAllTeachersData();
+    }
+  }, [activeTab]);
 
   React.useEffect(() => {
     async function loadLookups() {
@@ -955,35 +1094,552 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
     alert("Onboarding link copied to clipboard!");
   };
 
+  const renderUserDetailDrawer = () => {
+    if (!selectedUserDetail) return null;
+
+    return (
+      <div className="fixed inset-0 bg-[#1d1d1f]/30 backdrop-blur-sm z-50 flex justify-end animate-fadeIn">
+        <div className="absolute inset-0 cursor-pointer" onClick={() => setSelectedUserDetail(null)} />
+        <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col z-50 animate-slideOver overflow-hidden border-l border-[#d2d2d7]">
+          <div className="p-6 border-b border-[#d2d2d7] flex justify-between items-start gap-4 bg-slate-50">
+            <div className="flex gap-3 items-center">
+              <div className="w-10 h-10 rounded-xl bg-[#0066cc] text-white flex items-center justify-center font-bold text-sm uppercase shadow-sm border border-[#0066cc]/10">
+                {(selectedUserDetail.full_name || selectedUserDetail.email || "U").substring(0, 2)}
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-[#1d1d1f]">{selectedUserDetail.full_name || "User Details"}</h3>
+                <p className="text-[10px] text-[#86868b] font-medium mt-0.5">{selectedUserDetail.email}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-[#0066cc]/10 text-[#0066cc] border border-[#0066cc]/20">
+                    {selectedUserDetail.roles?.join(", ") || "No roles"}
+                  </span>
+                  <span className="text-[9px] text-[#86868b] font-medium">• Joined {new Date(selectedUserDetail.created_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+            </div>
+            <button 
+              onClick={() => setSelectedUserDetail(null)}
+              className="p-1 hover:bg-slate-200 rounded-lg transition-all border border-transparent hover:border-[#d2d2d7] cursor-pointer"
+            >
+              <svg className="w-4 h-4 text-[#86868b]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
+            <div className="bg-white border border-[#d2d2d7] rounded-xl p-4 space-y-3 shadow-sm">
+              <h4 className="text-[10px] font-bold text-[#1d1d1f] uppercase tracking-wider pb-2 border-b border-[#d2d2d7]">
+                Campus Profile Metadata
+              </h4>
+              <div className="divide-y divide-[#d2d2d7]/50 text-xs">
+                <div className="py-2.5 flex justify-between">
+                  <span className="text-[#86868b] font-medium">Full Name</span>
+                  <span className="font-semibold text-[#1d1d1f]">{selectedUserDetail.full_name || "N/A"}</span>
+                </div>
+                <div className="py-2.5 flex justify-between">
+                  <span className="text-[#86868b] font-medium">Email Address</span>
+                  <span className="font-semibold text-[#1d1d1f]">{selectedUserDetail.email}</span>
+                </div>
+                <div className="py-2.5 flex justify-between">
+                  <span className="text-[#86868b] font-medium">Status</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                    selectedUserDetail.status === "active"
+                      ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+                      : selectedUserDetail.status === "invited" || selectedUserDetail.status === "pending_activation"
+                      ? "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20"
+                      : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                  }`}>
+                    {selectedUserDetail.status}
+                  </span>
+                </div>
+                <div className="py-2.5 flex justify-between">
+                  <span className="text-[#86868b] font-medium">Profile ID</span>
+                  <span className="font-mono text-[10px] text-[#86868b] select-all">{selectedUserDetail.id}</span>
+                </div>
+                <div className="py-2.5 flex justify-between">
+                  <span className="text-[#86868b] font-medium">Created On</span>
+                  <span className="font-semibold text-[#1d1d1f]">{new Date(selectedUserDetail.created_at).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderTeacherDetailDrawer = () => {
+    if (!selectedTeacherForDetail) return null;
+
+    return (
+      <div className="fixed inset-0 bg-[#1d1d1f]/30 backdrop-blur-sm z-50 flex justify-end animate-fadeIn">
+        <div className="absolute inset-0 cursor-pointer" onClick={() => setSelectedTeacherForDetail(null)} />
+        <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-50 animate-slideOver overflow-hidden border-l border-[#d2d2d7]">
+          
+          {/* Drawer Header */}
+          <div className="p-6 border-b border-[#d2d2d7] flex justify-between items-start gap-4 bg-slate-50 shrink-0">
+            <div className="flex gap-3 items-center">
+              <div className="w-10 h-10 rounded-xl bg-[#0066cc] text-white flex items-center justify-center font-bold text-sm uppercase shadow-sm border border-[#0066cc]/10">
+                {(selectedTeacherForDetail.full_name || selectedTeacherForDetail.email || "T").substring(0, 2)}
+              </div>
+              <div>
+                <h3 className="text-xs font-bold text-[#1d1d1f]">{selectedTeacherForDetail.full_name || "Teacher Profile"}</h3>
+                <p className="text-[10px] text-[#86868b] font-medium mt-0.5">{selectedTeacherForDetail.email}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-[#0066cc]/10 text-[#0066cc] border border-[#0066cc]/20 uppercase">
+                    Teacher / Trainer
+                  </span>
+                </div>
+              </div>
+            </div>
+            <button 
+              onClick={() => setSelectedTeacherForDetail(null)}
+              className="p-1 hover:bg-slate-200 rounded-lg transition-all border border-transparent hover:border-[#d2d2d7] cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Drawer Content */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="bg-[#F5F5F7] border border-[#E8E8ED] p-4 rounded-xl text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-[#86868b] font-medium">Teacher ID:</span>
+                <span className="font-mono text-[#1d1d1f] select-all">{selectedTeacherForDetail.id}</span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h4 className="text-[11px] font-bold text-[#1d1d1f] uppercase tracking-wider pb-2 border-b border-[#d2d2d7]">
+                Assigned Campuses & Handled Programs
+              </h4>
+
+              {teacherDetailsLoading ? (
+                <div className="text-center py-12 text-xs text-[#86868b] font-medium flex items-center justify-center gap-2">
+                  <RefreshCw size={14} className="animate-spin text-[#0066cc]" /> Loading campus program status...
+                </div>
+              ) : teacherInstDetails.length === 0 ? (
+                <div className="text-center py-8 text-xs text-[#86868b] border border-dashed border-[#d2d2d7] rounded-xl">
+                  No active campus or program mappings found.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {Object.entries(
+                    teacherInstDetails.reduce((groups: any, item: any) => {
+                      const key = item.institution_name;
+                      if (!groups[key]) groups[key] = [];
+                      groups[key].push(item);
+                      return groups;
+                    }, {})
+                  ).map(([instName, items]: [string, any]) => {
+                    const isPrimary = items[0]?.is_primary;
+                    const instId = items[0]?.institution_id;
+
+                    return (
+                      <div key={instName} className="border border-[#E8E8ED] rounded-xl p-4 bg-white shadow-sm space-y-3">
+                        <div className="flex justify-between items-center pb-2 border-b border-dashed border-[#E8E8ED]">
+                          <h5 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
+                            {instName}
+                            {isPrimary && (
+                              <span className="bg-blue-50 text-blue-600 border border-blue-100 text-[8px] font-extrabold px-1.5 py-0.5 rounded">
+                                PRIMARY
+                              </span>
+                            )}
+                          </h5>
+                          
+                          {!isPrimary && (
+                            <button
+                              onClick={async () => {
+                                await handleUnmapTeacher(selectedTeacherForDetail.id, instId);
+                                loadTeacherDetailsData(selectedTeacherForDetail);
+                              }}
+                              className="text-[10px] text-red-500 font-bold hover:underline"
+                            >
+                              Remove Assignment
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-bold text-[#86868b] uppercase tracking-wide block">Managed Educational Programs:</span>
+                          
+                          {items.some((i: any) => i.program_title) ? (
+                            <div className="space-y-2">
+                              {items.filter((i: any) => i.program_title).map((item: any, idx: number) => (
+                                <div key={idx} className="flex justify-between items-center text-xs bg-slate-50/50 p-2.5 rounded-lg border border-[#E8E8ED]">
+                                  <span className="font-semibold text-[#1d1d1f]">{item.program_title}</span>
+                                  
+                                  <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase border ${
+                                    item.program_status === "active" || item.program_status === "public"
+                                      ? "bg-green-50 text-green-700 border-green-200"
+                                      : item.program_status === "ended" || item.program_status === "archived"
+                                      ? "bg-red-50 text-red-700 border-red-200"
+                                      : "bg-amber-50 text-amber-700 border-amber-200"
+                                  }`}>
+                                    {item.program_status || "Active"}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-[#86868b] italic">No active courses or programs assigned under this campus yet.</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Assign Additional Campus */}
+            <div className="bg-white border border-[#E8E8ED] rounded-xl p-4 shadow-sm space-y-3">
+              <h5 className="text-[11px] font-bold text-[#1d1d1f] uppercase tracking-wider">
+                Assign Additional Campus / Institution
+              </h5>
+              <p className="text-[10px] text-[#86868b] font-medium leading-relaxed">
+                Map this teacher/trainer to another educational institution. They will be able to manage programs and view academic courses under that institution.
+              </p>
+              <div className="flex flex-col gap-3 pt-1">
+                <div className="relative">
+                  <select
+                    value={mappingInstId}
+                    onChange={(e) => setMappingInstId(e.target.value)}
+                    className="w-full bg-[#F5F5F7] border border-[#d2d2d7] hover:border-[#86868b] px-3.5 py-2.5 rounded-xl text-xs font-semibold text-[#1d1d1f] focus:outline-none focus:ring-2 focus:ring-[#0066cc]/10 focus:border-[#0066cc] transition-all appearance-none cursor-pointer pr-10"
+                  >
+                    <option value="">Choose institution...</option>
+                    {institutions.map(inst => {
+                      const isAssigned = inst.id === selectedTeacherForDetail.tenant_id || (selectedTeacherForDetail.mapped_tenant_ids || []).includes(inst.id);
+                      return (
+                        <option key={inst.id} value={inst.id} disabled={isAssigned} className="text-[#1d1d1f]">
+                          {inst.name} {isAssigned ? "(Already Assigned)" : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <div className="absolute inset-y-0 right-3.5 flex items-center pointer-events-none text-[#86868b]">
+                    <ChevronDown size={14} />
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!mappingInstId) return;
+                    await handleMapTeacher(selectedTeacherForDetail.id, mappingInstId);
+                    setMappingInstId("");
+                  }}
+                  disabled={!mappingInstId || loadingTeachers}
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    mappingInstId && !loadingTeachers
+                      ? "bg-[#0066cc] text-white hover:bg-[#0066cc]/95 shadow-sm active:scale-[0.98]"
+                      : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                  }`}
+                >
+                  {loadingTeachers ? (
+                    <RefreshCw size={14} className="animate-spin" />
+                  ) : (
+                    <Plus size={14} />
+                  )}
+                  Assign Institution
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-4 border-t border-[#d2d2d7] bg-slate-50 flex justify-end shrink-0">
+            <button 
+              onClick={() => setSelectedTeacherForDetail(null)}
+              className="bg-white border border-[#d2d2d7] text-[#1d1d1f] hover:bg-slate-100 font-bold text-xs py-2 px-5 rounded-xl transition-all"
+            >
+              Close Details
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col text-[#0F172A]">
+    <div className="min-h-screen bg-[#f5f5f7] flex flex-col text-[#1d1d1f]">
       
       {/* Top Header */}
-      <header className="bg-white border-b border-[#E2E8F0] shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+      <header className="bg-white/80 backdrop-blur-md border-b border-[#d2d2d7]/50 shadow-sm sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 h-12 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Building className="text-[#2563EB]" size={20} />
-            <span className="font-bold text-sm tracking-tight">Hynox Campus Admin</span>
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-1.5 hover:bg-black/5 rounded-md text-[#1d1d1f] border border-transparent hover:border-black/10 transition-all cursor-pointer mr-1"
+              title="Toggle Sidebar"
+            >
+              <Menu size={14} />
+            </button>
+            <div className="bg-[#f5f5f7] p-1.5 rounded-md border border-[#d2d2d7]/30">
+              <Building className="text-[#1d1d1f]" size={14} />
+            </div>
+            <div className="flex items-center">
+              <span className="font-bold text-xs text-[#1d1d1f] tracking-tight title-font">Hynox Campus</span>
+              <span className="bg-[#f5f5f7] text-[#1d1d1f] border border-[#d2d2d7] px-2 py-0.5 rounded-full text-[8px] font-semibold tracking-wider uppercase ml-2">
+                Admin Console
+              </span>
+            </div>
           </div>
           
-          <div className="flex items-center gap-4 text-xs">
-            <span className="text-[#475569]">Logged in as: <strong className="text-[#0F172A]">{adminEmail}</strong></span>
+          <div className="flex items-center gap-5 text-[11px]">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-[#0066cc] animate-pulse"></div>
+              <span className="text-[#86868b] font-normal">
+                Logged in as: <strong className="text-[#1d1d1f] font-semibold">{adminEmail}</strong>
+              </span>
+            </div>
             <button
               onClick={() => signOutAction()}
-              className="flex items-center gap-1.5 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-3 py-1.5 rounded-lg hover:bg-[#DC2626] hover:text-white transition-all font-semibold"
+              className="flex items-center gap-1.5 bg-transparent hover:bg-black/5 text-[#1d1d1f] border border-black/15 hover:border-black/30 px-3 py-1 rounded-md transition-all font-medium cursor-pointer"
             >
-              <LogOut size={13} />
+              <LogOut size={11} className="text-[#86868b]" />
               Sign Out
             </button>
           </div>
         </div>
       </header>
 
+
       {/* Main Grid Workspace */}
-      <div className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 md:grid-cols-4 gap-8 flex-1 w-full">
+      <div className="max-w-7xl mx-auto px-6 py-8 flex gap-8 flex-1 w-full relative">
         
-        {/* Navigation Sidebar */}
-        <div className="md:col-span-1 flex flex-col gap-2">
+        {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
+        <div className="w-14 shrink-0 flex flex-col items-center gap-4 py-2 border-r border-[#d2d2d7]/50 pr-4">
+          <button
+            onClick={() => {
+              setActiveParentTab("institutions");
+              setActiveTab("institutions");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "institutions"
+                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+            }`}
+            title="Institutions Space"
+          >
+            <Building size={18} />
+          </button>
+          
+          <button
+            onClick={() => {
+              setActiveParentTab("onboarding");
+              setActiveTab("onboarding");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "onboarding"
+                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+            }`}
+            title="Onboarding Modules"
+          >
+            <UserCheck size={18} />
+          </button>
+          
+          <button
+            onClick={() => {
+              setActiveParentTab("library");
+              setActiveTab("library");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "library"
+                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+            }`}
+            title="Library Blueprints"
+          >
+            <BookOpen size={18} />
+          </button>
+          
+          <button
+            onClick={() => {
+              setActiveParentTab("programs");
+              setActiveTab("programs");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "programs"
+                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+            }`}
+            title="Programs & Academics"
+          >
+            <GraduationCap size={18} />
+          </button>
+          <button
+            onClick={() => {
+              setActiveParentTab("learning_manager");
+              setActiveTab("create_activity");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "learning_manager"
+                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+            }`}
+            title="Learning Activities"
+          >
+            <Award size={18} />
+          </button>
+        </div>
+
+        {/* SECONDARY SIDEBAR (Sub-options list) */}
+        {isSidebarOpen && (
+          <div className="w-52 shrink-0 flex flex-col gap-2 border-r border-[#d2d2d7]/50 pr-4">
+            <h4 className="text-[10px] font-bold text-[#86868b] uppercase tracking-wider px-2 mb-2">
+              {activeParentTab} Settings
+            </h4>
+            
+            {activeParentTab === "institutions" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("institutions")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "institutions"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  List Institutions
+                </button>
+                <button
+                  onClick={() => setActiveTab("add_institution")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "add_institution"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Add Institution
+                </button>
+                <button
+                  onClick={() => setActiveTab("explorer")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "explorer"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Institution Space
+                </button>
+              </>
+            )}
+
+            {activeParentTab === "onboarding" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("onboarding")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "onboarding"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Onboarding Status
+                </button>
+                <button
+                  onClick={() => setActiveTab("csv")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "csv"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  CSV Onboarding
+                </button>
+                <button
+                  onClick={() => setActiveTab("teacher_mapping")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "teacher_mapping"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Teacher Mapping
+                </button>
+              </>
+            )}
+
+            {activeParentTab === "library" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("library")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "library"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Course Blueprints
+                </button>
+              </>
+            )}
+
+            {activeParentTab === "programs" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("programs")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "programs"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Programs Explorer
+                </button>
+                <button
+                  onClick={() => setActiveTab("examine_programs")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "examine_programs"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Examine Programs
+                </button>
+                <button
+                  onClick={() => setActiveTab("cohorts")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "cohorts" || activeTab === "enrollments" || activeTab === "course_assignments"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Cohorts & Delivery
+                </button>
+              </>
+            )}
+
+            {activeParentTab === "learning_manager" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("create_activity")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "create_activity"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Create Activity
+                </button>
+                <button
+                  onClick={() => setActiveTab("view_activities")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "view_activities"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Published Activities
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Dynamic Wrapper Column to keep code clean */}
+        <div style={{ display: 'none' }}>
+          {/* Leftover Navigation Sidebar placeholder */}
           <button
             onClick={() => {
               setActiveTab("institutions");
@@ -991,28 +1647,14 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "institutions"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <Building size={16} />
             Institutions
           </button>
-          
-          <button
-            onClick={() => {
-              setActiveTab("assign");
-              clearStatuses();
-            }}
-            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
-              activeTab === "assign"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
-            }`}
-          >
-            <UserPlus size={16} />
-            Assign Admin
-          </button>
+
 
           <button
             onClick={() => {
@@ -1021,8 +1663,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "csv"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <FileSpreadsheet size={16} />
@@ -1036,8 +1678,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "onboarding"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <ShieldCheck size={16} />
@@ -1051,8 +1693,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "explorer"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <Globe size={16} />
@@ -1066,8 +1708,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "library"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <BookOpen size={16} />
@@ -1081,16 +1723,16 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "programs"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <GraduationCap size={16} />
             Programs (Live Content)
           </button>
 
-          <div className="pt-4 pb-2 border-t border-[#E2E8F0] mt-2">
-            <span className="px-4 text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-2">Delivery Module</span>
+          <div className="pt-4 pb-2 border-t border-[#d2d2d7] mt-2">
+            <span className="px-4 text-[10px] font-bold text-[#86868b] uppercase tracking-wider block mb-2">Delivery Module</span>
           </div>
 
           <button
@@ -1100,8 +1742,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "cohorts"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <Users size={16} />
@@ -1115,8 +1757,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "enrollments"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <UserCheck size={16} />
@@ -1130,8 +1772,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
               activeTab === "course_assignments"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <BookOpen size={16} />
@@ -1140,13 +1782,13 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
           <button
             onClick={() => {
-              setActiveTab("learning_manager");
+              setActiveTab("create_activity");
               clearStatuses();
             }}
             className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-left text-xs font-semibold transition-all ${
-              activeTab === "learning_manager"
-                ? "bg-[#2563EB]/10 border-[#2563EB]/20 text-[#2563EB] shadow-sm"
-                : "bg-white border-[#E2E8F0] hover:bg-slate-50 text-[#475569] hover:text-[#0F172A]"
+              activeTab === "create_activity"
+                ? "bg-[#0066cc]/10 border-[#0066cc]/20 text-[#0066cc] shadow-sm"
+                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868B] hover:text-[#1D1D1F]"
             }`}
           >
             <Award size={16} />
@@ -1155,7 +1797,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
         </div>
 
         {/* Content Area */}
-        <div className="md:col-span-3 flex flex-col gap-6">
+        <div className="flex-1 flex flex-col gap-6">
           
           {/* Global Alert Statuses */}
           {error && (
@@ -1175,123 +1817,16 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
           {/* TAB 1: INSTITUTIONS */}
           {activeTab === "institutions" && (
             <div className="space-y-6">
-              
-              {/* Institution Creation Form */}
-              <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm">
-                <h3 className="text-xs font-bold uppercase tracking-wider mb-4 text-[#475569] flex items-center gap-1.5">
-                  <Plus size={14} /> Register New Campus Institution
-                </h3>
-                
-                <form onSubmit={handleCreateInstitution} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                  <div>
-                    <label className="block font-semibold mb-1 text-[#475569]">Institution Name *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Stanford University"
-                      required
-                      value={instName}
-                      onChange={(e) => setInstName(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1 text-[#475569]">Subdomain Slug (Unique) *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. stanford"
-                      required
-                      value={instSlug}
-                      onChange={(e) => setInstSlug(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1 text-[#475569]">Institution Code (Unique) *</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. SU-CAMPUS"
-                      required
-                      value={instCode}
-                      onChange={(e) => setInstCode(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1 text-[#475569]">Category Type *</label>
-                    <select
-                      value={instType}
-                      onChange={(e) => setInstType(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    >
-                      <option value="school">School</option>
-                      <option value="college">College</option>
-                      <option value="university">University</option>
-                      <option value="training_center">Training Center</option>
-                      <option value="corporate_partner">Corporate Partner</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1 text-[#475569]">Contact Email</label>
-                    <input
-                      type="email"
-                      placeholder="admin@college.edu"
-                      value={instEmail}
-                      onChange={(e) => setInstEmail(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block font-semibold mb-1 text-[#475569]">Contact Phone</label>
-                    <input
-                      type="text"
-                      placeholder="+1 (555) 019-2834"
-                      value={instPhone}
-                      onChange={(e) => setInstPhone(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block font-semibold mb-1 text-[#475569]">Website Address</label>
-                    <input
-                      type="text"
-                      placeholder="https://college.edu"
-                      value={instWebsite}
-                      onChange={(e) => setInstWebsite(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block font-semibold mb-1 text-[#475569]">Physical Address</label>
-                    <textarea
-                      placeholder="Street, City, State, ZIP"
-                      value={instAddress}
-                      onChange={(e) => setInstAddress(e.target.value)}
-                      rows={2}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm resize-none"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 pt-2">
-                    <button
-                      type="submit"
-                      disabled={loading}
-                      className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
-                    >
-                      {loading ? "Registering..." : "Create Institution"}
-                    </button>
-                  </div>
-                </form>
-              </div>
 
               {/* Institutions Listing Table */}
-              <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden shadow-sm">
-                <div className="bg-slate-50 px-6 py-3 border-b border-[#E2E8F0]">
-                  <h4 className="text-xs font-bold text-[#0F172A]">REGISTERED INSTITUTIONS</h4>
+              <div className="bg-white border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm">
+                <div className="bg-slate-50 px-6 py-3 border-b border-[#d2d2d7]">
+                  <h4 className="text-xs font-bold text-[#1d1d1f]">REGISTERED INSTITUTIONS</h4>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-50/50 border-b border-[#E2E8F0] font-bold text-[#475569]">
+                      <tr className="bg-slate-50/50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
                         <th className="px-6 py-2.5">Name</th>
                         <th className="px-6 py-2.5">Code</th>
                         <th className="px-6 py-2.5">Type</th>
@@ -1299,14 +1834,14 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         <th className="px-6 py-2.5 text-right">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#E2E8F0]">
+                    <tbody className="divide-y divide-[#d2d2d7]">
                       {institutions.length > 0 ? (
                         institutions.map((inst, idx) => (
                           <tr key={idx} className="hover:bg-slate-50/30 transition-colors">
-                            <td className="px-6 py-3 font-semibold text-[#0F172A]">{inst.name}</td>
-                            <td className="px-6 py-3 text-[#475569] font-mono">{inst.institution_code}</td>
-                            <td className="px-6 py-3 text-[#475569] font-medium">{inst.institution_type}</td>
-                            <td className="px-6 py-3 text-[#475569]">{inst.slug}</td>
+                            <td className="px-6 py-3 font-semibold text-[#1d1d1f]">{inst.name}</td>
+                            <td className="px-6 py-3 text-[#86868b] font-mono">{inst.institution_code}</td>
+                            <td className="px-6 py-3 text-[#86868b] font-medium">{inst.institution_type}</td>
+                            <td className="px-6 py-3 text-[#86868b]">{inst.slug}</td>
                             <td className="px-6 py-3 text-right">
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                                 inst.status === "active"
@@ -1320,7 +1855,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={5} className="px-6 py-6 text-center text-[#475569]">
+                          <td colSpan={5} className="px-6 py-6 text-center text-[#86868b]">
                             No registered institutions found.
                           </td>
                         </tr>
@@ -1333,72 +1868,130 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
           )}
 
-          {/* TAB 2: ASSIGN ADMIN */}
-          {activeTab === "assign" && (
-            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm">
-              <h3 className="text-xs font-bold uppercase tracking-wider mb-4 text-[#475569] flex items-center gap-1.5">
-                <UserPlus size={15} /> Assign Institution Administrator
-              </h3>
+          {/* TAB 1.5: REGISTER NEW INSTITUTION */}
+          {activeTab === "add_institution" && (
+            <div className="space-y-6">
+              <div className="bg-white border border-[#d2d2d7] rounded-xl p-6 shadow-sm">
+                <h3 className="text-xs font-bold uppercase tracking-wider mb-4 text-[#86868b] flex items-center gap-1.5">
+                  <Plus size={14} /> Register New Campus Institution
+                </h3>
+                
+                <form onSubmit={handleCreateInstitution} className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <label className="block font-semibold mb-1 text-[#86868b]">Institution Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Stanford University"
+                      required
+                      value={instName}
+                      onChange={(e) => setInstName(e.target.value)}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1 text-[#86868b]">Subdomain Slug (Unique) *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. stanford"
+                      required
+                      value={instSlug}
+                      onChange={(e) => setInstSlug(e.target.value)}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1 text-[#86868b]">Institution Code (Unique) *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. SU-CAMPUS"
+                      required
+                      value={instCode}
+                      onChange={(e) => setInstCode(e.target.value)}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1 text-[#86868b]">Category Type *</label>
+                    <select
+                      value={instType}
+                      onChange={(e) => setInstType(e.target.value)}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    >
+                      <option value="school">School</option>
+                      <option value="college">College</option>
+                      <option value="university">University</option>
+                      <option value="training_center">Training Center</option>
+                      <option value="corporate_partner">Corporate Partner</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1 text-[#86868b]">Contact Email</label>
+                    <input
+                      type="email"
+                      placeholder="admin@college.edu"
+                      value={instEmail}
+                      onChange={(e) => setInstEmail(e.target.value)}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold mb-1 text-[#86868b]">Contact Phone</label>
+                    <input
+                      type="text"
+                      placeholder="+1 (555) 019-2834"
+                      value={instPhone}
+                      onChange={(e) => setInstPhone(e.target.value)}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block font-semibold mb-1 text-[#86868b]">Website Address</label>
+                    <input
+                      type="text"
+                      placeholder="https://college.edu"
+                      value={instWebsite}
+                      onChange={(e) => setInstWebsite(e.target.value)}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block font-semibold mb-1 text-[#86868b]">Physical Address</label>
+                    <textarea
+                      placeholder="Street, City, State, ZIP"
+                      value={instAddress}
+                      onChange={(e) => setInstAddress(e.target.value)}
+                      rows={2}
+                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm resize-none text-[#1d1d1f]"
+                    />
+                  </div>
 
-              <p className="text-xs text-[#475569] mb-5 leading-relaxed">
-                Map a pre-registered user (via their email address) to manage a specific academic campus tenant. 
-                This assigns them the `institution_admin` role and links their profile tenant isolation scope.
-              </p>
-
-              <form onSubmit={handleAssignAdmin} className="space-y-4 text-xs max-w-md">
-                <div>
-                  <label className="block font-semibold mb-1 text-[#475569]">Select Campus Tenant *</label>
-                  <select
-                    value={selectedInstId}
-                    onChange={(e) => setSelectedInstId(e.target.value)}
-                    className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                  >
-                    <option value="">-- Choose Institution --</option>
-                    {institutions.map((inst) => (
-                      <option key={inst.id} value={inst.id}>
-                        {inst.name} ({inst.institution_code})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold mb-1 text-[#475569]">Administrator Email Address *</label>
-                  <input
-                    type="email"
-                    placeholder="e.g. principal@college.edu"
-                    required
-                    value={adminEmailInput}
-                    onChange={(e) => setAdminEmailInput(e.target.value)}
-                    className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
-                  />
-                </div>
-
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    disabled={loading || !selectedInstId || !adminEmailInput}
-                    className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
-                  >
-                    {loading ? "Assigning..." : "Assign Tenant Administrator"}
-                  </button>
-                </div>
-              </form>
+                  <div className="md:col-span-2 pt-2">
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="bg-[#0066cc] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {loading ? "Registering..." : "Create Institution"}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
+
 
           {/* TAB 3: CSV ONBOARDING / SINGLE ONBOARDING */}
           {activeTab === "csv" && (
             <div className="space-y-6">
-              <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm">
+              <div className="bg-white border border-[#d2d2d7] rounded-xl p-6 shadow-sm">
                 
                 {/* Onboarding Mode Selection Toggle */}
-                <div className="flex items-center justify-between pb-4 mb-5 border-b border-[#E2E8F0]">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#475569] flex items-center gap-1.5">
+                <div className="flex items-center justify-between pb-4 mb-5 border-b border-[#d2d2d7]">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#86868b] flex items-center gap-1.5">
                     <UserPlus size={15} /> User Onboarding
                   </h3>
                   
-                  <div className="flex bg-slate-100 p-0.5 rounded-lg border border-[#E2E8F0]">
+                  <div className="flex bg-slate-100 p-0.5 rounded-lg border border-[#d2d2d7]">
                     <button
                       type="button"
                       onClick={() => {
@@ -1407,8 +2000,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       }}
                       className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all ${
                         onboardMode === "single"
-                          ? "bg-white text-[#2563EB] shadow-sm border border-[#E2E8F0]/30"
-                          : "text-[#475569] hover:text-[#0F172A]"
+                          ? "bg-white text-[#0066cc] shadow-sm border border-[#d2d2d7]/30"
+                          : "text-[#86868b] hover:text-[#1d1d1f]"
                       }`}
                     >
                       Single User
@@ -1421,8 +2014,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       }}
                       className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition-all ${
                         onboardMode === "csv"
-                          ? "bg-white text-[#2563EB] shadow-sm border border-[#E2E8F0]/30"
-                          : "text-[#475569] hover:text-[#0F172A]"
+                          ? "bg-white text-[#0066cc] shadow-sm border border-[#d2d2d7]/30"
+                          : "text-[#86868b] hover:text-[#1d1d1f]"
                       }`}
                     >
                       Bulk CSV Upload
@@ -1433,17 +2026,17 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                 {onboardMode === "single" ? (
                   // Single User Onboarding Form
                   <form onSubmit={handleSingleUserOnboard} className="space-y-4 text-xs">
-                    <p className="text-xs text-[#475569] mb-2 leading-relaxed">
+                    <p className="text-xs text-[#86868b] mb-2 leading-relaxed">
                       Onboard a single user instantly. Fill in their details below, select their role, and assign them to a school/college campus.
                     </p>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Campus / Institution *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Campus / Institution *</label>
                         <select
                           value={selectedInstId}
                           onChange={(e) => setSelectedInstId(e.target.value)}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
                           required
                         >
                           <option value="">-- Choose Institution or School --</option>
@@ -1456,11 +2049,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       </div>
 
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Assigned Role *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Assigned Role *</label>
                         <select
                           value={singleRole}
                           onChange={(e) => setSingleRole(e.target.value)}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
                           required
                         >
                           <option value="student">Student</option>
@@ -1471,25 +2064,25 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       </div>
 
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Full Name *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Full Name *</label>
                         <input
                           type="text"
                           placeholder="e.g. John Doe"
                           value={singleName}
                           onChange={(e) => setSingleName(e.target.value)}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
                           required
                         />
                       </div>
 
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Email Address *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Email Address *</label>
                         <input
                           type="email"
                           placeholder="e.g. john.doe@school.edu"
                           value={singleEmail}
                           onChange={(e) => setSingleEmail(e.target.value)}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
                           required
                         />
                       </div>
@@ -1499,7 +2092,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       <button
                         type="submit"
                         disabled={loading || !selectedInstId || !singleName.trim() || !singleEmail.trim()}
-                        className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
+                        className="bg-[#0066cc] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-all disabled:opacity-50"
                       >
                         {loading ? "Sending Invitation..." : "Onboard Single User"}
                       </button>
@@ -1508,17 +2101,17 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                 ) : (
                   // Bulk CSV Onboarding Form
                   <form onSubmit={handleCsvUpload} className="space-y-4 text-xs">
-                    <p className="text-xs text-[#475569] mb-2 leading-relaxed">
+                    <p className="text-xs text-[#86868b] mb-2 leading-relaxed">
                       Download our pre-filled Excel template, populate your spreadsheet, and upload it directly. Or simply paste CSV data directly in the textbox below.
                     </p>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Default Institution *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Default Institution *</label>
                         <select
                           value={selectedInstId}
                           onChange={(e) => setSelectedInstId(e.target.value)}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
                           required
                         >
                           <option value="">-- Choose Institution or School --</option>
@@ -1535,7 +2128,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           type="button"
                           disabled={!selectedInstId}
                           onClick={downloadTemplateExcel}
-                          className="flex items-center gap-1.5 bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20 px-3.5 py-2 rounded-lg hover:bg-[#2563EB] hover:text-white transition-all font-semibold disabled:opacity-50 text-[11px]"
+                          className="flex items-center gap-1.5 bg-[#0066cc]/10 text-[#0066cc] border border-[#0066cc]/20 px-3.5 py-2 rounded-lg hover:bg-[#0066cc] hover:text-white transition-all font-semibold disabled:opacity-50 text-[11px]"
                         >
                           <Download size={13} />
                           Download Excel Template
@@ -1544,7 +2137,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                     </div>
 
                     {/* File Upload Box */}
-                    <div className="border border-dashed border-[#E2E8F0] bg-slate-50/50 hover:bg-slate-50 rounded-xl p-6 text-center transition-all relative">
+                    <div className="border border-dashed border-[#d2d2d7] bg-slate-50/50 hover:bg-slate-50 rounded-xl p-6 text-center transition-all relative">
                       <input
                         type="file"
                         accept=".csv, .xlsx, .xls"
@@ -1553,11 +2146,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         disabled={!selectedInstId}
                       />
                       <div className="flex flex-col items-center justify-center gap-2">
-                        <Upload className="text-[#475569]" size={20} />
-                        <span className="font-semibold text-xs text-[#0F172A]">
+                        <Upload className="text-[#86868b]" size={20} />
+                        <span className="font-semibold text-xs text-[#1d1d1f]">
                           {uploadedFileName ? `Selected: ${uploadedFileName}` : "Click or Drag & Drop Excel/CSV sheet here"}
                         </span>
-                        <span className="text-[10px] text-[#475569]">
+                        <span className="text-[10px] text-[#86868b]">
                           Supports .xlsx, .xls, and .csv formats
                         </span>
                       </div>
@@ -1565,11 +2158,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <label className="block font-semibold text-[#475569]">Spreadsheet Preview (Pasted or Loaded) *</label>
+                        <label className="block font-semibold text-[#86868b]">Spreadsheet Preview (Pasted or Loaded) *</label>
                         <button
                           type="button"
                           onClick={() => setCsvContent(`name,email,role\nJane Doe,jane@school.edu,student\nJohn Smith,john@school.edu,teacher`)}
-                          className="text-[10px] text-[#2563EB] hover:underline font-bold"
+                          className="text-[10px] text-[#0066cc] hover:underline font-bold"
                         >
                           (Insert Sample Template)
                         </button>
@@ -1580,7 +2173,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         value={csvContent}
                         onChange={(e) => setCsvContent(e.target.value)}
                         rows={8}
-                        className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#2563EB] shadow-sm resize-y"
+                        className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#0066cc] shadow-sm resize-y"
                       />
                     </div>
 
@@ -1588,7 +2181,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       <button
                         type="submit"
                         disabled={loading || !selectedInstId || !csvContent.trim()}
-                        className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
+                        className="bg-[#0066cc] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-all disabled:opacity-50"
                       >
                         {loading ? "Processing Onboarding..." : "Process Bulk Onboarding Link"}
                       </button>
@@ -1599,17 +2192,17 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
               {/* Onboarding Links Generation Display */}
               {links.length > 0 && (
-                <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden shadow-sm">
-                  <div className="bg-slate-50 px-6 py-3 border-b border-[#E2E8F0]">
-                    <h4 className="text-xs font-bold text-[#0F172A]">GENERATED ONBOARDING LINKS</h4>
+                <div className="bg-white border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm">
+                  <div className="bg-slate-50 px-6 py-3 border-b border-[#d2d2d7]">
+                    <h4 className="text-xs font-bold text-[#1d1d1f]">GENERATED ONBOARDING LINKS</h4>
                   </div>
                   
-                  <div className="divide-y divide-[#E2E8F0]">
+                  <div className="divide-y divide-[#d2d2d7]">
                     {links.map((link, idx) => (
                       <div key={idx} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50/20 text-xs">
                         <div className="flex flex-col gap-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-[#0F172A] truncate">{link.email}</span>
+                            <span className="font-semibold text-[#1d1d1f] truncate">{link.email}</span>
                             <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
                               link.status === "success" 
                                 ? "bg-[#16A34A]/10 text-[#16A34A]" 
@@ -1620,7 +2213,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </div>
                           {link.error && <p className="text-[#DC2626] text-[10px]">{link.error}</p>}
                           {link.link && (
-                            <span className="text-[#475569] font-mono text-[10px] select-all truncate block">
+                            <span className="text-[#86868b] font-mono text-[10px] select-all truncate block">
                               {link.link}
                             </span>
                           )}
@@ -1629,7 +2222,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         {link.link && (
                           <button
                             onClick={() => copyToClipboard(link.link)}
-                            className="flex items-center justify-center gap-1.5 border border-[#E2E8F0] bg-white px-2.5 py-1.5 rounded-lg hover:bg-slate-50 transition-all font-semibold shrink-0 text-[10px]"
+                            className="flex items-center justify-center gap-1.5 border border-[#d2d2d7] bg-white px-2.5 py-1.5 rounded-lg hover:bg-slate-50 transition-all font-semibold shrink-0 text-[10px]"
                           >
                             <Copy size={12} />
                             Copy Link
@@ -1650,69 +2243,137 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
               
               {/* Statistics Grid */}
               <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
-                  <div className="text-[10px] font-bold text-[#475569] uppercase tracking-wider">Total Invited</div>
-                  <div className="text-xl font-bold mt-1 text-[#0F172A]">{computedStats.total}</div>
+                <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
+                  <div className="text-[10px] font-bold text-[#86868b] uppercase tracking-wider">Total Invited</div>
+                  <div className="text-xl font-bold mt-1 text-[#1d1d1f]">{computedStats.total}</div>
                 </div>
-                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
                   <div className="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">Accepted (Approved)</div>
                   <div className="text-xl font-bold mt-1 text-[#16A34A]">{computedStats.accepted}</div>
                 </div>
-                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
-                  <div className="text-[10px] font-bold text-[#2563EB] uppercase tracking-wider">Pending (Awaiting)</div>
-                  <div className="text-xl font-bold mt-1 text-[#2563EB]">{computedStats.pending}</div>
+                <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
+                  <div className="text-[10px] font-bold text-[#0066cc] uppercase tracking-wider">Pending (Awaiting)</div>
+                  <div className="text-xl font-bold mt-1 text-[#0066cc]">{computedStats.pending}</div>
                 </div>
-                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
                   <div className="text-[10px] font-bold text-[#F59E0B] uppercase tracking-wider">Expired</div>
                   <div className="text-xl font-bold mt-1 text-[#F59E0B]">{computedStats.expired}</div>
                 </div>
-                <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm col-span-2 lg:col-span-1">
+                <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm col-span-2 lg:col-span-1">
                   <div className="text-[10px] font-bold text-[#DC2626] uppercase tracking-wider">Failed / Revoked</div>
                   <div className="text-xl font-bold mt-1 text-[#DC2626]">{computedStats.failed + computedStats.revoked}</div>
                 </div>
               </div>
 
               {/* Main List and Filters Card */}
-              <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-[#E2E8F0] flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/50">
-                  {/* Filter Pills */}
-                  <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto">
-                    {(["all", "pending", "accepted", "expired", "failed", "revoked"] as const).map((filter) => {
-                      const labelMap = {
-                        all: "All",
-                        pending: "Pending / Sent",
-                        accepted: "Accepted",
-                        expired: "Expired",
-                        failed: "Failed",
-                        revoked: "Revoked",
-                      };
-                      const isActive = inviteFilter === filter;
-                      return (
-                        <button
-                          key={filter}
-                          onClick={() => setInviteFilter(filter)}
-                          className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
-                            isActive
-                              ? "bg-[#2563EB] text-white border-[#2563EB] shadow-sm"
-                              : "bg-white text-[#475569] border-[#E2E8F0] hover:bg-slate-50"
-                          }`}
-                        >
-                          {labelMap[filter]}
-                        </button>
-                      );
-                    })}
+              <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-sm overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-[#d2d2d7] space-y-4 bg-slate-50/50">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    {/* Filter Pills */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(["all", "pending", "accepted", "expired", "failed", "revoked"] as const).map((filter) => {
+                        const labelMap = {
+                          all: "All Statuses",
+                          pending: "Pending / Sent",
+                          accepted: "Accepted",
+                          expired: "Expired",
+                          failed: "Failed",
+                          revoked: "Revoked",
+                        };
+                        const isActive = inviteFilter === filter;
+                        return (
+                          <button
+                            key={filter}
+                            onClick={() => setInviteFilter(filter)}
+                            className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
+                              isActive
+                                ? "bg-[#0066cc] text-white border-[#0066cc] shadow-sm"
+                                : "bg-white text-[#86868b] border-[#d2d2d7] hover:bg-slate-50 hover:text-[#1d1d1f]"
+                            }`}
+                          >
+                            {labelMap[filter]}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Search input */}
+                    <div className="relative w-full md:w-64">
+                      <Search className="absolute left-3 top-2.5 text-[#86868b]" size={14} />
+                      <input
+                        type="text"
+                        placeholder="Search invitees..."
+                        value={inviteSearch}
+                        onChange={(e) => setInviteSearch(e.target.value)}
+                        className="w-full bg-white border border-[#d2d2d7] rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                      />
+                    </div>
                   </div>
 
-                  {/* Search input */}
-                  <div className="relative w-full sm:w-64">
-                    <Search className="absolute left-3 top-2.5 text-[#475569]" size={14} />
-                    <input
-                      type="text"
-                      placeholder="Search by name or email..."
-                      value={inviteSearch}
-                      onChange={(e) => setInviteSearch(e.target.value)}
-                      className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-xs text-[#0F172A]"
-                    />
+                  {/* Advanced Filters Row */}
+                  <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-[#d2d2d7]/50 text-xs">
+                    <div className="flex flex-col gap-1 min-w-[140px]">
+                      <span className="text-[9px] font-bold text-[#86868b] uppercase tracking-wider">Institution Scope</span>
+                      <select
+                        value={inviteInstitutionFilter}
+                        onChange={(e) => setInviteInstitutionFilter(e.target.value)}
+                        className="bg-white border border-[#d2d2d7] rounded-lg px-2.5 py-1.5 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0066cc] shadow-sm"
+                      >
+                        <option value="all">All Institutions</option>
+                        {institutions.map((inst) => (
+                          <option key={inst.id} value={inst.id}>
+                            {inst.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1 min-w-[120px]">
+                      <span className="text-[9px] font-bold text-[#86868b] uppercase tracking-wider">Assigned Role</span>
+                      <select
+                        value={inviteRoleFilter}
+                        onChange={(e) => setInviteRoleFilter(e.target.value)}
+                        className="bg-white border border-[#d2d2d7] rounded-lg px-2.5 py-1.5 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0066cc] shadow-sm"
+                      >
+                        <option value="all">All Roles</option>
+                        <option value="student_onboarding">Student</option>
+                        <option value="trainer_onboarding">Teacher / Trainer</option>
+                        <option value="institution_admin_invite">Institution Admin</option>
+                        <option value="mentor_invite">Mentor</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1 min-w-[120px]">
+                      <span className="text-[9px] font-bold text-[#86868b] uppercase tracking-wider">Creation Timeline</span>
+                      <select
+                        value={inviteDateFilter}
+                        onChange={(e) => setInviteDateFilter(e.target.value)}
+                        className="bg-white border border-[#d2d2d7] rounded-lg px-2.5 py-1.5 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0066cc] shadow-sm"
+                      >
+                        <option value="all">All Time</option>
+                        <option value="today">Today</option>
+                        <option value="7days">Last 7 Days</option>
+                        <option value="30days">Last 30 Days</option>
+                      </select>
+                    </div>
+
+                    {(inviteInstitutionFilter !== "all" || inviteRoleFilter !== "all" || inviteDateFilter !== "all" || inviteSearch || inviteFilter !== "all") && (
+                      <div className="flex items-end self-end h-[38px] pb-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInviteInstitutionFilter("all");
+                            setInviteRoleFilter("all");
+                            setInviteDateFilter("all");
+                            setInviteSearch("");
+                            setInviteFilter("all");
+                          }}
+                          className="text-[#0066cc] hover:text-[#0066cc]/80 font-semibold text-xs hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          Reset Filters
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1720,7 +2381,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-50/30 border-b border-[#E2E8F0] font-bold text-[#475569]">
+                      <tr className="bg-slate-50/30 border-b border-[#d2d2d7] font-bold text-[#86868b]">
                         <th className="px-6 py-3">Invitee Details</th>
                         <th className="px-6 py-3">Target Campus / Role</th>
                         <th className="px-6 py-3">Created / Expires At</th>
@@ -1728,7 +2389,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         <th className="px-6 py-3 text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#E2E8F0]">
+                    <tbody className="divide-y divide-[#d2d2d7]">
                       {filteredInvitations.length > 0 ? (
                         filteredInvitations.map((inv) => {
                           const now = new Date();
@@ -1747,7 +2408,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
                           // Determine badge color
                           let statusBadge = (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20 flex items-center gap-1 w-fit">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#0066cc]/10 text-[#0066cc] border-[#0066cc]/20 flex items-center gap-1 w-fit">
                               <Clock size={10} /> Pending
                             </span>
                           );
@@ -1793,20 +2454,20 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           return (
                             <tr key={inv.id} className="hover:bg-slate-50/20 transition-colors">
                               <td className="px-6 py-4">
-                                <div className="font-semibold text-[#0F172A]">{inv.user?.full_name || "N/A"}</div>
-                                <div className="text-[#475569] text-[11px] font-medium">{inv.user?.email}</div>
+                                <div className="font-semibold text-[#1d1d1f]">{inv.user?.full_name || "N/A"}</div>
+                                <div className="text-[#86868b] text-[11px] font-medium">{inv.user?.email}</div>
                               </td>
                               <td className="px-6 py-4">
-                                <div className="font-medium text-[#0F172A]">{inv.institution_name}</div>
-                                <span className="inline-flex px-1.5 py-0.5 rounded bg-slate-100 text-[#475569] font-bold text-[9px] mt-0.5">
+                                <div className="font-medium text-[#1d1d1f]">{inv.institution_name}</div>
+                                <span className="inline-flex px-1.5 py-0.5 rounded bg-slate-100 text-[#86868b] font-bold text-[9px] mt-0.5">
                                   {roleLabel}
                                 </span>
                               </td>
-                              <td className="px-6 py-4 text-[#475569] leading-normal">
+                              <td className="px-6 py-4 text-[#86868b] leading-normal">
                                 <div className="font-medium text-[11px]">
                                   Sent: {new Date(inv.created_at).toLocaleDateString()}
                                 </div>
-                                <div className={`text-[10px] ${isExpired ? "text-[#DC2626]" : "text-[#475569]"}`}>
+                                <div className={`text-[10px] ${isExpired ? "text-[#DC2626]" : "text-[#86868b]"}`}>
                                   {isExpired ? "Expired" : `Expires: ${new Date(inv.expires_at).toLocaleDateString()}`}
                                 </div>
                               </td>
@@ -1816,7 +2477,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                   {!isExpired && inv.status !== "accepted" && inv.status !== "revoked" && (
                                     <button
                                       onClick={() => copyToClipboard(fullInviteLink)}
-                                      className="flex items-center gap-1 border border-[#E2E8F0] bg-white px-2.5 py-1.5 rounded-lg hover:bg-slate-50 transition-all font-semibold text-[10px]"
+                                      className="flex items-center gap-1 border border-[#d2d2d7] bg-white px-2.5 py-1.5 rounded-lg hover:bg-slate-50 transition-all font-semibold text-[10px]"
                                     >
                                       <Copy size={11} /> Copy Link
                                     </button>
@@ -1826,7 +2487,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                     <button
                                       disabled={regeneratingId === inv.id}
                                       onClick={() => handleRegenerateInvite(inv.id)}
-                                      className="flex items-center gap-1.5 bg-[#2563EB] text-white px-2.5 py-1.5 rounded-lg hover:bg-[#2563EB]/95 transition-all font-semibold text-[10px] disabled:opacity-50"
+                                      className="flex items-center gap-1.5 bg-[#0066cc] text-white px-2.5 py-1.5 rounded-lg hover:bg-[#0066cc]/95 transition-all font-semibold text-[10px] disabled:opacity-50"
                                     >
                                       {regeneratingId === inv.id ? (
                                         <RefreshCw size={11} className="animate-spin" />
@@ -1843,7 +2504,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         })
                       ) : (
                         <tr>
-                          <td colSpan={5} className="px-6 py-8 text-center text-[#475569] font-medium">
+                          <td colSpan={5} className="px-6 py-8 text-center text-[#86868b] font-medium">
                             No matching invitations found.
                           </td>
                         </tr>
@@ -1856,22 +2517,97 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
           )}
 
+          {/* TAB: TEACHER MULTI-INSTITUTION MAPPING */}
+          {activeTab === "teacher_mapping" && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-sm p-6">
+                <div>
+                  <h3 className="text-sm font-bold text-[#1d1d1f]">Teacher Campus Assignments Mapping</h3>
+                  <p className="text-[11px] text-[#86868b] mt-0.5">Assign, manage, and map registered educators and teachers to various school or college campus institutions.</p>
+                </div>
+
+                <div className="mt-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-[#E8E8ED]">
+                  <div className="w-full sm:max-w-xs">
+                    <input 
+                      type="text"
+                      placeholder="Search teachers by name or email..."
+                      value={teacherSearch}
+                      onChange={(e) => setTeacherSearch(e.target.value)}
+                      className="bg-white border border-[#d2d2d7] px-3.5 py-1.5 rounded-lg text-xs w-full focus:outline-none focus:border-[#0066cc]"
+                    />
+                  </div>
+                  <button 
+                    onClick={loadAllTeachersData}
+                    disabled={loadingTeachers}
+                    className="flex items-center gap-1.5 bg-[#0066cc] text-white px-3.5 py-1.5 rounded-lg hover:bg-[#0066cc]/95 transition-all text-xs font-bold disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={loadingTeachers ? "animate-spin" : ""} />
+                    Refresh Teachers
+                  </button>
+                </div>
+
+                {loadingTeachers && teachersList.length === 0 ? (
+                  <div className="text-center py-12 text-xs text-[#86868b] font-medium flex items-center justify-center gap-2">
+                    <RefreshCw size={14} className="animate-spin text-[#0066cc]" /> Retrieving registered teacher credentials...
+                  </div>
+                ) : teachersList.length === 0 ? (
+                  <div className="text-center py-12 text-xs text-[#86868b] border border-dashed border-[#d2d2d7] rounded-xl mt-4">
+                    No registered teachers/trainers found on the platform.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#E8E8ED] mt-2">
+                    {teachersList.filter(t => 
+                      !teacherSearch || 
+                      t.full_name?.toLowerCase().includes(teacherSearch.toLowerCase()) || 
+                      t.email?.toLowerCase().includes(teacherSearch.toLowerCase())
+                    ).map(teacher => {
+                      const primaryInst = institutions.find(i => i.id === teacher.tenant_id);
+                      
+                      return (
+                        <div 
+                          key={teacher.id} 
+                          onClick={() => loadTeacherDetailsData(teacher)}
+                          className="py-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-6 hover:bg-slate-50/50 px-3 rounded-xl transition-all cursor-pointer select-none"
+                        >
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <h4 className="text-xs font-bold text-[#1d1d1f] flex items-center gap-2">
+                              {teacher.full_name}
+                              <span className="bg-[#0066cc]/10 text-[#0066cc] border border-[#0066cc]/20 px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wide">
+                                Teacher
+                              </span>
+                            </h4>
+                            <p className="text-[10px] text-[#86868b]">{teacher.email}</p>
+                            
+                          </div>
+                          <div className="text-xs text-[#0066cc] font-semibold flex items-center gap-1 hover:underline">
+                            View details & assign
+                            <ChevronRight size={14} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* TAB 5: INSTITUTION SPACE EXPLORER */}
           {activeTab === "explorer" && (
             <div className="space-y-6">
               
               {/* Selector Card */}
-              <div className="bg-white border border-[#E2E8F0] p-6 rounded-xl shadow-sm">
-                <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#475569] flex items-center gap-1.5">
+              <div className="bg-white border border-[#d2d2d7] p-6 rounded-xl shadow-sm">
+                <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#86868b] flex items-center gap-1.5">
                   <Globe size={14} /> Select Campus Space
                 </h3>
-                <p className="text-xs text-[#475569] mb-4">
+                <p className="text-xs text-[#86868b] mb-4">
                   Select a campus institution tenant to explore its registered administrators, teachers, and students.
                 </p>
                 <select
                   value={explorerSelectedId}
                   onChange={(e) => handleSelectInstitutionForExplorer(e.target.value)}
-                  className="w-full max-w-md bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                  className="w-full max-w-md bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                 >
                   <option value="">-- Choose Institution --</option>
                   {institutions.map((inst) => (
@@ -1885,35 +2621,35 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
               {explorerSelectedId && (
                 <>
                   {explorerLoading ? (
-                    <div className="bg-white border border-[#E2E8F0] rounded-xl p-12 text-center shadow-sm">
-                      <RefreshCw size={24} className="animate-spin text-[#2563EB] mx-auto mb-2" />
-                      <p className="text-xs text-[#475569] font-medium">Loading campus directory...</p>
+                    <div className="bg-white border border-[#d2d2d7] rounded-xl p-12 text-center shadow-sm">
+                      <RefreshCw size={24} className="animate-spin text-[#0066cc] mx-auto mb-2" />
+                      <p className="text-xs text-[#86868b] font-medium">Loading campus directory...</p>
                     </div>
                   ) : (
                     <>
                       {/* Stats Grid */}
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
-                          <div className="text-[10px] font-bold text-[#475569] uppercase tracking-wider">Total Campus Users</div>
-                          <div className="text-xl font-bold mt-1 text-[#0F172A]">{computedExplorerStats.total}</div>
+                        <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
+                          <div className="text-[10px] font-bold text-[#86868b] uppercase tracking-wider">Total Campus Users</div>
+                          <div className="text-xl font-bold mt-1 text-[#1d1d1f]">{computedExplorerStats.total}</div>
                         </div>
-                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                        <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
                           <div className="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">Administrators</div>
                           <div className="text-xl font-bold mt-1 text-[#16A34A]">{computedExplorerStats.admins}</div>
                         </div>
-                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
-                          <div className="text-[10px] font-bold text-[#2563EB] uppercase tracking-wider">Teachers / Trainers</div>
-                          <div className="text-xl font-bold mt-1 text-[#2563EB]">{computedExplorerStats.teachers}</div>
+                        <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
+                          <div className="text-[10px] font-bold text-[#0066cc] uppercase tracking-wider">Teachers / Trainers</div>
+                          <div className="text-xl font-bold mt-1 text-[#0066cc]">{computedExplorerStats.teachers}</div>
                         </div>
-                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl shadow-sm">
+                        <div className="bg-white border border-[#d2d2d7] p-4 rounded-xl shadow-sm">
                           <div className="text-[10px] font-bold text-[#06B6D4] uppercase tracking-wider">Students</div>
                           <div className="text-xl font-bold mt-1 text-[#06B6D4]">{computedExplorerStats.students}</div>
                         </div>
                       </div>
 
                       {/* User list and filtering */}
-                      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-sm overflow-hidden flex flex-col">
-                        <div className="p-4 border-b border-[#E2E8F0] flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/50">
+                      <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-sm overflow-hidden flex flex-col">
+                        <div className="p-4 border-b border-[#d2d2d7] flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50/50">
                           {/* Filter Pills */}
                           <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto">
                             {(["all", "admin", "teacher", "student"] as const).map((filter) => {
@@ -1930,8 +2666,8 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                   onClick={() => setExplorerRoleFilter(filter)}
                                   className={`px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${
                                     isActive
-                                      ? "bg-[#2563EB] text-white border-[#2563EB] shadow-sm"
-                                      : "bg-white text-[#475569] border-[#E2E8F0] hover:bg-slate-50"
+                                      ? "bg-[#0066cc] text-white border-[#0066cc] shadow-sm"
+                                      : "bg-white text-[#86868b] border-[#d2d2d7] hover:bg-slate-50"
                                   }`}
                                 >
                                   {labelMap[filter]}
@@ -1942,13 +2678,13 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
                           {/* Search Input */}
                           <div className="relative w-full sm:w-64">
-                            <Search className="absolute left-3 top-2.5 text-[#475569]" size={14} />
+                            <Search className="absolute left-3 top-2.5 text-[#86868b]" size={14} />
                             <input
                               type="text"
                               placeholder="Search directory..."
                               value={explorerSearch}
                               onChange={(e) => setExplorerSearch(e.target.value)}
-                              className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-xs text-[#0F172A]"
+                              className="w-full bg-white border border-[#d2d2d7] rounded-lg pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-xs text-[#1d1d1f]"
                             />
                           </div>
                         </div>
@@ -1957,19 +2693,19 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         <div className="overflow-x-auto">
                           <table className="w-full text-left border-collapse text-xs">
                             <thead>
-                              <tr className="bg-slate-50/30 border-b border-[#E2E8F0] font-bold text-[#475569]">
+                              <tr className="bg-slate-50/30 border-b border-[#d2d2d7] font-bold text-[#86868b]">
                                 <th className="px-6 py-3">User Details</th>
                                 <th className="px-6 py-3">Assigned Role</th>
                                 <th className="px-6 py-3">Status</th>
                                 <th className="px-6 py-3">Joined Date</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-[#E2E8F0]">
+                            <tbody className="divide-y divide-[#d2d2d7]">
                               {filteredExplorerUsers.length > 0 ? (
                                 filteredExplorerUsers.map((user) => {
                                   // Determine badge style for role
                                   let roleBadge = (
-                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-slate-100 text-[#475569] border-slate-200">
+                                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-slate-100 text-[#86868b] border-slate-200">
                                       Member
                                     </span>
                                   );
@@ -1982,7 +2718,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                     );
                                   } else if (user.roles.includes("teacher") || user.roles.includes("trainer")) {
                                     roleBadge = (
-                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20">
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-[#0066cc]/10 text-[#0066cc] border-[#0066cc]/20">
                                         Teacher
                                       </span>
                                     );
@@ -2016,14 +2752,14 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                   }
 
                                   return (
-                                    <tr key={user.id} className="hover:bg-slate-50/20 transition-colors">
+                                    <tr key={user.id} onClick={() => setSelectedUserDetail(user)} className="hover:bg-slate-50/50 transition-colors cursor-pointer">
                                       <td className="px-6 py-4">
-                                        <div className="font-semibold text-[#0F172A]">{user.full_name || "N/A"}</div>
-                                        <div className="text-[#475569] text-[11px] font-medium">{user.email}</div>
+                                        <div className="font-semibold text-[#1d1d1f]">{user.full_name || "N/A"}</div>
+                                        <div className="text-[#86868b] text-[11px] font-medium">{user.email}</div>
                                       </td>
                                       <td className="px-6 py-4">{roleBadge}</td>
                                       <td className="px-6 py-4">{statusBadge}</td>
-                                      <td className="px-6 py-4 text-[#475569] font-medium">
+                                      <td className="px-6 py-4 text-[#86868b] font-medium">
                                         {new Date(user.created_at).toLocaleDateString()}
                                       </td>
                                     </tr>
@@ -2031,7 +2767,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                 })
                               ) : (
                                 <tr>
-                                  <td colSpan={4} className="px-6 py-8 text-center text-[#475569] font-medium">
+                                  <td colSpan={4} className="px-6 py-8 text-center text-[#86868b] font-medium">
                                     No users found in this role group.
                                   </td>
                                 </tr>
@@ -2055,10 +2791,31 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
           )}
 
-          {/* TAB 7: PROGRAMS (LIVE CONTENT) */}
+          {/* TAB 7: PROGRAMS EXPLORER */}
           {activeTab === "programs" && (
             <div className="space-y-6 animate-fade-in">
-              <ProgramManager institutions={institutions} />
+              <ProgramManager 
+                institutions={institutions} 
+                mode="explorer" 
+                selectedInstId={progSelectedInstId}
+                setSelectedInstId={setProgSelectedInstId}
+                selectedProgram={progSelectedProgram}
+                setSelectedProgram={setProgSelectedProgram}
+              />
+            </div>
+          )}
+
+          {/* TAB 7.5: EXAMINE PROGRAMS */}
+          {activeTab === "examine_programs" && (
+            <div className="space-y-6 animate-fade-in">
+              <ProgramManager 
+                institutions={institutions} 
+                mode="examine" 
+                selectedInstId={progSelectedInstId}
+                setSelectedInstId={setProgSelectedInstId}
+                selectedProgram={progSelectedProgram}
+                setSelectedProgram={setProgSelectedProgram}
+              />
             </div>
           )}
 
@@ -2084,9 +2841,15 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
           )}
 
           {/* TAB: LEARNING MANAGER */}
-          {activeTab === "learning_manager" && (
+          {activeTab === "create_activity" && (
             <div className="space-y-6 animate-fade-in">
-              <LearningManager institutions={institutions} />
+              <LearningManager institutions={institutions} mode="create" />
+            </div>
+          )}
+
+          {activeTab === "view_activities" && (
+            <div className="space-y-6 animate-fade-in">
+              <LearningManager institutions={institutions} mode="view" />
             </div>
           )}
 
@@ -2095,11 +2858,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             <div className="space-y-6 animate-fade-in">
               
               {/* Institution Selection */}
-              <div className="bg-white border border-[#E2E8F0] p-6 rounded-xl shadow-sm">
-                <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#475569] flex items-center gap-1.5">
+              <div className="bg-white border border-[#d2d2d7] p-6 rounded-xl shadow-sm">
+                <h3 className="text-xs font-bold uppercase tracking-wider mb-2 text-[#86868b] flex items-center gap-1.5">
                   <GraduationCap size={15} /> Academic Institution Scope
                 </h3>
-                <p className="text-xs text-[#475569] mb-4">
+                <p className="text-xs text-[#86868b] mb-4">
                   Select a campus institution to manage its academic catalog, course curriculum, and teacher mapping.
                 </p>
                 <select
@@ -2107,7 +2870,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   onChange={(e) => {
                     setAcadSelectedInstId(e.target.value);
                   }}
-                  className="w-full max-w-md bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                  className="w-full max-w-md bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                 >
                   <option value="">-- Select Institution Campus --</option>
                   {institutions.map((inst) => (
@@ -2125,10 +2888,10 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   <div className="lg:col-span-1 space-y-6">
                     
                     {/* Programs Section */}
-                    <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm space-y-4">
+                    <div className="bg-white border border-[#d2d2d7] rounded-xl p-4 shadow-sm space-y-4">
                       <div className="flex items-center justify-between">
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
-                          <Folder size={14} className="text-[#2563EB]" /> Programs
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-[#1d1d1f] flex items-center gap-1.5">
+                          <Folder size={14} className="text-[#0066cc]" /> Programs
                         </h4>
                         <button
                           onClick={() => {
@@ -2138,7 +2901,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                             setProgramForm({ title: "", slug: "", description: "", status_id: activeStatus, visibility_type_id: publicVisibility });
                             setProgramModalOpen(true);
                           }}
-                          className="flex items-center gap-1 bg-[#2563EB] text-white px-2 py-1 rounded-lg hover:bg-[#2563EB]/95 transition-all text-[10px] font-bold shadow-sm"
+                          className="flex items-center gap-1 bg-[#0066cc] text-white px-2 py-1 rounded-lg hover:bg-[#0066cc]/95 transition-all text-[10px] font-bold shadow-sm"
                         >
                           <Plus size={12} /> Add
                         </button>
@@ -2155,13 +2918,13 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                               }}
                               className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
                                 acadSelectedProgram?.id === prog.id
-                                  ? "bg-[#2563EB]/10 border-[#2563EB]/30 text-[#2563EB]"
-                                  : "bg-slate-50/50 hover:bg-slate-50 border-[#E2E8F0] text-[#0F172A]"
+                                  ? "bg-[#0066cc]/10 border-[#0066cc]/30 text-[#0066cc]"
+                                  : "bg-slate-50/50 hover:bg-slate-50 border-[#d2d2d7] text-[#1d1d1f]"
                               }`}
                             >
                               <div className="min-w-0 pr-2">
                                 <p className="font-semibold truncate">{prog.title}</p>
-                                <p className="text-[10px] text-[#475569] font-mono truncate">/{prog.slug}</p>
+                                <p className="text-[10px] text-[#86868b] font-mono truncate">/{prog.slug}</p>
                               </div>
                               <div className="flex items-center gap-1 shrink-0">
                                 <button
@@ -2177,7 +2940,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                     });
                                     setProgramModalOpen(true);
                                   }}
-                                  className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                  className="p-1 hover:bg-slate-200 rounded text-[#86868b] hover:text-[#1d1d1f]"
                                 >
                                   <Edit size={12} />
                                 </button>
@@ -2202,20 +2965,20 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                             </div>
                           ))
                         ) : (
-                          <p className="text-[11px] text-[#475569] text-center py-4 bg-slate-50/50 rounded-lg">No programs registered yet.</p>
+                          <p className="text-[11px] text-[#86868b] text-center py-4 bg-slate-50/50 rounded-lg">No programs registered yet.</p>
                         )}
                       </div>
                     </div>
 
                     {/* Courses Section */}
                     {acadSelectedProgram && (
-                      <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm space-y-4">
+                      <div className="bg-white border border-[#d2d2d7] rounded-xl p-4 shadow-sm space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="min-w-0 pr-2">
-                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
-                              <GraduationCap size={14} className="text-[#2563EB]" /> Courses
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#1d1d1f] flex items-center gap-1.5">
+                              <GraduationCap size={14} className="text-[#0066cc]" /> Courses
                             </h4>
-                            <p className="text-[10px] text-[#475569] truncate font-medium">under: {acadSelectedProgram.title}</p>
+                            <p className="text-[10px] text-[#86868b] truncate font-medium">under: {acadSelectedProgram.title}</p>
                           </div>
                           <button
                             onClick={() => {
@@ -2236,7 +2999,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                               });
                               setCourseModalOpen(true);
                             }}
-                            className="flex items-center gap-1 bg-[#2563EB] text-white px-2 py-1 rounded-lg hover:bg-[#2563EB]/95 transition-all text-[10px] font-bold shadow-sm shrink-0"
+                            className="flex items-center gap-1 bg-[#0066cc] text-white px-2 py-1 rounded-lg hover:bg-[#0066cc]/95 transition-all text-[10px] font-bold shadow-sm shrink-0"
                           >
                             <Plus size={12} /> Add
                           </button>
@@ -2250,13 +3013,13 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                 onClick={() => setAcadSelectedCourse(crs)}
                                 className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
                                   acadSelectedCourse?.id === crs.id
-                                    ? "bg-[#2563EB]/10 border-[#2563EB]/30 text-[#2563EB]"
-                                    : "bg-slate-50/50 hover:bg-slate-50 border-[#E2E8F0] text-[#0F172A]"
+                                    ? "bg-[#0066cc]/10 border-[#0066cc]/30 text-[#0066cc]"
+                                    : "bg-slate-50/50 hover:bg-slate-50 border-[#d2d2d7] text-[#1d1d1f]"
                                 }`}
                               >
                                 <div className="min-w-0 pr-2">
                                   <p className="font-semibold truncate">{crs.title}</p>
-                                  <p className="text-[10px] text-[#475569] truncate font-mono">/{crs.slug}</p>
+                                  <p className="text-[10px] text-[#86868b] truncate font-mono">/{crs.slug}</p>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
                                   <button
@@ -2276,7 +3039,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                       });
                                       setCourseModalOpen(true);
                                     }}
-                                    className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                    className="p-1 hover:bg-slate-200 rounded text-[#86868b] hover:text-[#1d1d1f]"
                                   >
                                     <Edit size={12} />
                                   </button>
@@ -2301,7 +3064,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                               </div>
                             ))
                           ) : (
-                            <p className="text-[11px] text-[#475569] text-center py-4 bg-slate-50/50 rounded-lg font-medium">No courses in this program.</p>
+                            <p className="text-[11px] text-[#86868b] text-center py-4 bg-slate-50/50 rounded-lg font-medium">No courses in this program.</p>
                           )}
                         </div>
                       </div>
@@ -2313,25 +3076,25 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                     {acadSelectedCourse ? (
                       <>
                         {/* Course Overview & Instructors Map */}
-                        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-6">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-[#E2E8F0] pb-4">
+                        <div className="bg-white border border-[#d2d2d7] rounded-xl p-6 shadow-sm space-y-6">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-[#d2d2d7] pb-4">
                             <div>
-                              <h3 className="text-sm font-bold text-[#0F172A]">{acadSelectedCourse.title}</h3>
-                              <p className="text-xs text-[#475569] mt-0.5">{acadSelectedCourse.description || "No description set for this course."}</p>
+                              <h3 className="text-sm font-bold text-[#1d1d1f]">{acadSelectedCourse.title}</h3>
+                              <p className="text-xs text-[#86868b] mt-0.5">{acadSelectedCourse.description || "No description set for this course."}</p>
                             </div>
-                            <div className="mt-2 sm:mt-0 bg-slate-100 px-3 py-1.5 rounded-lg text-[11px] text-[#0F172A] border border-[#E2E8F0] font-mono shrink-0 font-semibold">
+                            <div className="mt-2 sm:mt-0 bg-slate-100 px-3 py-1.5 rounded-lg text-[11px] text-[#1d1d1f] border border-[#d2d2d7] font-mono shrink-0 font-semibold">
                               Duration: {acadSelectedCourse.duration_minutes || 0} mins
                             </div>
                           </div>
 
                           {/* Instructors Panel */}
                           <div className="space-y-3">
-                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
-                              <Users size={14} className="text-[#2563EB]" /> Course Instructors (Teachers/Trainers)
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#1d1d1f] flex items-center gap-1.5">
+                              <Users size={14} className="text-[#0066cc]" /> Course Instructors (Teachers/Trainers)
                             </h4>
                             
                             <form onSubmit={handleSaveInstructors} className="space-y-4">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[160px] overflow-y-auto p-1 border border-[#E2E8F0] rounded-lg">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[160px] overflow-y-auto p-1 border border-[#d2d2d7] rounded-lg">
                                 {acadTenantTeachers.length > 0 ? (
                                   acadTenantTeachers.map((teach) => {
                                     const isAssigned = acadInstructors.some(i => i.user_id === teach.id);
@@ -2347,24 +3110,24 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                               setAcadInstructors(acadInstructors.filter(i => i.user_id !== teach.id));
                                             }
                                           }}
-                                          className="rounded border-[#E2E8F0] text-[#2563EB] focus:ring-[#2563EB] h-3.5 w-3.5"
+                                          className="rounded border-[#d2d2d7] text-[#0066cc] focus:ring-[#0066cc] h-3.5 w-3.5"
                                         />
                                         <div className="min-w-0">
-                                          <p className="font-semibold text-[#0F172A] truncate">{teach.full_name}</p>
-                                          <p className="text-[10px] text-[#475569] truncate font-medium">{teach.email}</p>
+                                          <p className="font-semibold text-[#1d1d1f] truncate">{teach.full_name}</p>
+                                          <p className="text-[10px] text-[#86868b] truncate font-medium">{teach.email}</p>
                                         </div>
                                       </label>
                                     );
                                   })
                                 ) : (
-                                  <p className="col-span-2 text-[11px] text-[#475569] text-center py-4 font-medium">No active teachers/trainers found in this tenant space.</p>
+                                  <p className="col-span-2 text-[11px] text-[#86868b] text-center py-4 font-medium">No active teachers/trainers found in this tenant space.</p>
                                 )}
                               </div>
                               {acadTenantTeachers.length > 0 && (
                                 <button
                                   type="submit"
                                   disabled={loading}
-                                  className="flex items-center gap-1.5 bg-[#2563EB] text-white px-3.5 py-2 rounded-lg hover:bg-[#2563EB]/95 transition-all text-xs font-semibold shadow-sm disabled:opacity-50"
+                                  className="flex items-center gap-1.5 bg-[#0066cc] text-white px-3.5 py-2 rounded-lg hover:bg-[#0066cc]/95 transition-all text-xs font-semibold shadow-sm disabled:opacity-50"
                                 >
                                   <Save size={13} />
                                   {loading ? "Saving Mapping..." : "Save Assigned Instructors"}
@@ -2375,10 +3138,10 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         </div>
 
                         {/* Curriculum Modules & Lessons Explorer */}
-                        <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-sm space-y-4">
-                          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
-                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#0F172A] flex items-center gap-1.5">
-                              <FolderPlus size={15} className="text-[#2563EB]" /> Course Curriculum Modules
+                        <div className="bg-white border border-[#d2d2d7] rounded-xl p-6 shadow-sm space-y-4">
+                          <div className="flex items-center justify-between border-b border-[#d2d2d7] pb-3">
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-[#1d1d1f] flex items-center gap-1.5">
+                              <FolderPlus size={15} className="text-[#0066cc]" /> Course Curriculum Modules
                             </h4>
                             <button
                               onClick={() => {
@@ -2387,7 +3150,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                 setModuleForm({ title: "", description: "", position: acadModules.length + 1, status_id: activeStatus });
                                 setModuleModalOpen(true);
                               }}
-                              className="flex items-center gap-1 bg-[#2563EB] text-white px-2.5 py-1.5 rounded-lg hover:bg-[#2563EB]/95 transition-all text-[11px] font-bold shadow-sm"
+                              className="flex items-center gap-1 bg-[#0066cc] text-white px-2.5 py-1.5 rounded-lg hover:bg-[#0066cc]/95 transition-all text-[11px] font-bold shadow-sm"
                             >
                               <Plus size={13} /> Create Module
                             </button>
@@ -2396,14 +3159,14 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           <div className="space-y-4">
                             {acadModules.length > 0 ? (
                               acadModules.map((mod) => (
-                                <div key={mod.id} className="border border-[#E2E8F0] rounded-xl overflow-hidden shadow-sm bg-slate-50/20">
+                                <div key={mod.id} className="border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm bg-slate-50/20">
                                   {/* Module Header */}
-                                  <div className="bg-slate-50 px-4 py-3 flex items-center justify-between border-b border-[#E2E8F0]">
+                                  <div className="bg-slate-50 px-4 py-3 flex items-center justify-between border-b border-[#d2d2d7]">
                                     <div className="min-w-0 pr-2">
-                                      <p className="font-semibold text-xs text-[#0F172A] truncate">
+                                      <p className="font-semibold text-xs text-[#1d1d1f] truncate">
                                         Module {mod.position}: {mod.title}
                                       </p>
-                                      {mod.description && <p className="text-[10px] text-[#475569] truncate mt-0.5">{mod.description}</p>}
+                                      {mod.description && <p className="text-[10px] text-[#86868b] truncate mt-0.5">{mod.description}</p>}
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
                                       <button
@@ -2424,7 +3187,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                           });
                                           setLessonModalOpen(true);
                                         }}
-                                        className="flex items-center gap-1 bg-white border border-[#E2E8F0] hover:bg-slate-50 px-2 py-1 rounded text-[10px] font-bold text-[#0F172A] shadow-xs"
+                                        className="flex items-center gap-1 bg-white border border-[#d2d2d7] hover:bg-slate-50 px-2 py-1 rounded text-[10px] font-bold text-[#1d1d1f] shadow-xs"
                                       >
                                         <Plus size={11} /> Add Lesson
                                       </button>
@@ -2439,7 +3202,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                           });
                                           setModuleModalOpen(true);
                                         }}
-                                        className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                        className="p-1 hover:bg-slate-200 rounded text-[#86868b] hover:text-[#1d1d1f]"
                                       >
                                         <Edit size={12} />
                                       </button>
@@ -2465,12 +3228,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                   <div className="p-4 space-y-3">
                                     {mod.lessons && mod.lessons.length > 0 ? (
                                       mod.lessons.map((les: any) => (
-                                        <div key={les.id} className="bg-white border border-[#E2E8F0] rounded-xl p-3.5 space-y-3 shadow-xs">
+                                        <div key={les.id} className="bg-white border border-[#d2d2d7] rounded-xl p-3.5 space-y-3 shadow-xs">
                                           <div className="flex items-start justify-between">
                                             <div className="min-w-0 pr-2">
                                               <div className="flex items-center gap-2">
-                                                <span className="font-semibold text-xs text-[#0F172A]">{les.title}</span>
-                                                <span className="text-[9px] bg-slate-100 text-[#475569] px-1.5 py-0.5 rounded font-bold font-mono">
+                                                <span className="font-semibold text-xs text-[#1d1d1f]">{les.title}</span>
+                                                <span className="text-[9px] bg-slate-100 text-[#86868b] px-1.5 py-0.5 rounded font-bold font-mono">
                                                   {les.lesson_type?.code || "lesson"}
                                                 </span>
                                                 {les.is_preview && (
@@ -2479,7 +3242,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                                   </span>
                                                 )}
                                               </div>
-                                              <p className="text-[10px] text-[#475569] mt-0.5 font-mono font-medium">
+                                              <p className="text-[10px] text-[#86868b] mt-0.5 font-mono font-medium">
                                                 Position: {les.position} • {les.duration || 0} mins
                                               </p>
                                             </div>
@@ -2496,7 +3259,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                                   });
                                                   setResourceModalOpen(true);
                                                 }}
-                                                className="flex items-center gap-1 hover:bg-slate-100 text-[10px] text-[#2563EB] font-bold px-2 py-1 rounded"
+                                                className="flex items-center gap-1 hover:bg-slate-100 text-[10px] text-[#0066cc] font-bold px-2 py-1 rounded"
                                               >
                                                 <Link2 size={12} /> Resource
                                               </button>
@@ -2516,7 +3279,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                                   });
                                                   setLessonModalOpen(true);
                                                 }}
-                                                className="p-1 hover:bg-slate-200 rounded text-[#475569] hover:text-[#0F172A]"
+                                                className="p-1 hover:bg-slate-200 rounded text-[#86868b] hover:text-[#1d1d1f]"
                                               >
                                                 <Edit size={12} />
                                               </button>
@@ -2540,19 +3303,19 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
                                           {/* Lesson Resource list */}
                                           {les.resources && les.resources.length > 0 && (
-                                            <div className="bg-slate-50/50 border border-[#E2E8F0] rounded-lg p-2 space-y-1.5">
-                                              <p className="text-[10px] font-bold uppercase tracking-wider text-[#475569] px-1">Attachments & External Resources</p>
-                                              <div className="divide-y divide-[#E2E8F0] bg-white rounded-md border border-[#E2E8F0]">
+                                            <div className="bg-slate-50/50 border border-[#d2d2d7] rounded-lg p-2 space-y-1.5">
+                                              <p className="text-[10px] font-bold uppercase tracking-wider text-[#86868b] px-1">Attachments & External Resources</p>
+                                              <div className="divide-y divide-[#d2d2d7] bg-white rounded-md border border-[#d2d2d7]">
                                                 {les.resources.map((res: any) => (
                                                   <div key={res.id} className="px-2 py-1.5 flex items-center justify-between text-[11px]">
                                                     <div className="flex items-center gap-1.5 min-w-0">
-                                                      <File size={12} className="text-[#475569] shrink-0" />
-                                                      <span className="font-semibold text-[#0F172A] truncate">{res.title}</span>
-                                                      <span className="text-[9px] bg-slate-100 text-[#475569] px-1 rounded-sm">{res.resource_type}</span>
+                                                      <File size={12} className="text-[#86868b] shrink-0" />
+                                                      <span className="font-semibold text-[#1d1d1f] truncate">{res.title}</span>
+                                                      <span className="text-[9px] bg-slate-100 text-[#86868b] px-1 rounded-sm">{res.resource_type}</span>
                                                     </div>
                                                     <div className="flex items-center gap-1.5 shrink-0 ml-2">
                                                       {res.external_url && (
-                                                        <a href={res.external_url} target="_blank" rel="noopener noreferrer" className="p-0.5 text-[#2563EB] hover:text-[#2563EB]/80">
+                                                        <a href={res.external_url} target="_blank" rel="noopener noreferrer" className="p-0.5 text-[#0066cc] hover:text-[#0066cc]/80">
                                                           <ExternalLink size={12} />
                                                         </a>
                                                       )}
@@ -2580,21 +3343,21 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                         </div>
                                       ))
                                     ) : (
-                                      <p className="text-[11px] text-[#475569] text-center py-2 font-medium">No lessons created in this module.</p>
+                                      <p className="text-[11px] text-[#86868b] text-center py-2 font-medium">No lessons created in this module.</p>
                                     )}
                                   </div>
                                 </div>
                               ))
                             ) : (
-                              <p className="text-[11px] text-[#475569] text-center py-6 bg-slate-50/50 rounded-xl font-medium">No curriculum modules defined. Add a module to begin.</p>
+                              <p className="text-[11px] text-[#86868b] text-center py-6 bg-slate-50/50 rounded-xl font-medium">No curriculum modules defined. Add a module to begin.</p>
                             )}
                           </div>
                         </div>
                       </>
                     ) : (
-                      <div className="bg-white border border-[#E2E8F0] rounded-xl p-12 text-center shadow-sm">
+                      <div className="bg-white border border-[#d2d2d7] rounded-xl p-12 text-center shadow-sm">
                         <Folder className="mx-auto text-slate-300 mb-2" size={32} />
-                        <p className="text-xs text-[#475569] font-medium">Select a Course on the left to start configuring its syllabus curriculum.</p>
+                        <p className="text-xs text-[#86868b] font-medium">Select a Course on the left to start configuring its syllabus curriculum.</p>
                       </div>
                     )}
                   </div>
@@ -2606,49 +3369,49 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
               
               {/* Program Modal */}
               {programModalOpen && (
-                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
-                    <h3 className="font-bold text-sm text-[#0F172A]">{editingProgram ? "Edit Academic Program" : "Create New Program"}</h3>
+                <div className="fixed inset-0 bg-[#1d1d1f]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#d2d2d7] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#1d1d1f]">{editingProgram ? "Edit Academic Program" : "Create New Program"}</h3>
                     <form onSubmit={handleProgramSubmit} className="space-y-4 text-xs">
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Program Title *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Program Title *</label>
                         <input
                           type="text"
                           required
                           value={programForm.title}
                           onChange={(e) => setProgramForm({ ...programForm, title: e.target.value })}
                           placeholder="e.g. Full Stack Web Development"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">URL Slug (Unique per Tenant) *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">URL Slug (Unique per Tenant) *</label>
                         <input
                           type="text"
                           required
                           value={programForm.slug}
                           onChange={(e) => setProgramForm({ ...programForm, slug: e.target.value })}
                           placeholder="e.g. full-stack-dev"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Description</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Description</label>
                         <textarea
                           value={programForm.description}
                           onChange={(e) => setProgramForm({ ...programForm, description: e.target.value })}
                           placeholder="Provide a brief curriculum program overview..."
                           rows={3}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f] resize-none"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Status *</label>
                           <select
                             value={programForm.status_id}
                             onChange={(e) => setProgramForm({ ...programForm, status_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.statuses.map((s: any) => (
                               <option key={s.id} value={s.id}>{s.description}</option>
@@ -2656,11 +3419,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Visibility *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Visibility *</label>
                           <select
                             value={programForm.visibility_type_id}
                             onChange={(e) => setProgramForm({ ...programForm, visibility_type_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.visibilityTypes.map((v: any) => (
                               <option key={v.id} value={v.id}>{v.description}</option>
@@ -2668,18 +3431,18 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                       </div>
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#d2d2d7]">
                         <button
                           type="button"
                           onClick={() => setProgramModalOpen(false)}
-                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                          className="bg-white border border-[#d2d2d7] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
                         >
                           Cancel
                         </button>
                         <button
                           type="submit"
                           disabled={loading}
-                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                          className="bg-[#0066cc] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 disabled:opacity-50"
                         >
                           {loading ? "Saving..." : "Save Program"}
                         </button>
@@ -2691,49 +3454,49 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
               {/* Course Modal */}
               {courseModalOpen && (
-                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
-                    <h3 className="font-bold text-sm text-[#0F172A]">{editingCourse ? "Edit Course" : "Create New Course"}</h3>
+                <div className="fixed inset-0 bg-[#1d1d1f]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#d2d2d7] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#1d1d1f]">{editingCourse ? "Edit Course" : "Create New Course"}</h3>
                     <form onSubmit={handleCourseSubmit} className="space-y-4 text-xs">
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Course Title *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Course Title *</label>
                         <input
                           type="text"
                           required
                           value={courseForm.title}
                           onChange={(e) => setCourseForm({ ...courseForm, title: e.target.value })}
                           placeholder="e.g. Intro to React & Next.js"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">URL Slug (Unique per Tenant) *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">URL Slug (Unique per Tenant) *</label>
                         <input
                           type="text"
                           required
                           value={courseForm.slug}
                           onChange={(e) => setCourseForm({ ...courseForm, slug: e.target.value })}
                           placeholder="e.g. react-nextjs-intro"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Description</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Description</label>
                         <textarea
                           value={courseForm.description}
                           onChange={(e) => setCourseForm({ ...courseForm, description: e.target.value })}
                           placeholder="Provide a syllabus course description..."
                           rows={2}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f] resize-none"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Course Type *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Course Type *</label>
                           <select
                             value={courseForm.course_type_id}
                             onChange={(e) => setCourseForm({ ...courseForm, course_type_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.courseTypes.map((t: any) => (
                               <option key={t.id} value={t.id}>{t.description}</option>
@@ -2741,11 +3504,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Enrollment Mode *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Enrollment Mode *</label>
                           <select
                             value={courseForm.enrollment_mode}
                             onChange={(e) => setCourseForm({ ...courseForm, enrollment_mode: e.target.value as any })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             <option value="open">Open Access</option>
                             <option value="approval">Approval Required</option>
@@ -2756,20 +3519,20 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       </div>
                       <div className="grid grid-cols-3 gap-3">
                         <div className="col-span-1">
-                          <label className="block font-semibold mb-1 text-[#475569]">Duration (Mins)</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Duration (Mins)</label>
                           <input
                             type="number"
                             value={courseForm.duration_minutes}
                             onChange={(e) => setCourseForm({ ...courseForm, duration_minutes: Number(e.target.value) })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           />
                         </div>
                         <div className="col-span-1">
-                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Status *</label>
                           <select
                             value={courseForm.status_id}
                             onChange={(e) => setCourseForm({ ...courseForm, status_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.statuses.map((s: any) => (
                               <option key={s.id} value={s.id}>{s.description}</option>
@@ -2777,11 +3540,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                         <div className="col-span-1">
-                          <label className="block font-semibold mb-1 text-[#475569]">Visibility *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Visibility *</label>
                           <select
                             value={courseForm.visibility_type_id}
                             onChange={(e) => setCourseForm({ ...courseForm, visibility_type_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.visibilityTypes.map((v: any) => (
                               <option key={v.id} value={v.id}>{v.description}</option>
@@ -2789,18 +3552,18 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                       </div>
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#d2d2d7]">
                         <button
                           type="button"
                           onClick={() => setCourseModalOpen(false)}
-                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                          className="bg-white border border-[#d2d2d7] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
                         >
                           Cancel
                         </button>
                         <button
                           type="submit"
                           disabled={loading}
-                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                          className="bg-[#0066cc] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 disabled:opacity-50"
                         >
                           {loading ? "Saving..." : "Save Course"}
                         </button>
@@ -2812,48 +3575,48 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
               {/* Module Modal */}
               {moduleModalOpen && (
-                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
-                    <h3 className="font-bold text-sm text-[#0F172A]">{editingModule ? "Edit Module" : "Create New Module"}</h3>
+                <div className="fixed inset-0 bg-[#1d1d1f]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#d2d2d7] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#1d1d1f]">{editingModule ? "Edit Module" : "Create New Module"}</h3>
                     <form onSubmit={handleModuleSubmit} className="space-y-4 text-xs">
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Module Title *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Module Title *</label>
                         <input
                           type="text"
                           required
                           value={moduleForm.title}
                           onChange={(e) => setModuleForm({ ...moduleForm, title: e.target.value })}
                           placeholder="e.g. Getting Started with React"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Description</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Description</label>
                         <textarea
                           value={moduleForm.description}
                           onChange={(e) => setModuleForm({ ...moduleForm, description: e.target.value })}
                           placeholder="Module syllabus description..."
                           rows={2}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f] resize-none"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Position Order *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Position Order *</label>
                           <input
                             type="number"
                             required
                             value={moduleForm.position}
                             onChange={(e) => setModuleForm({ ...moduleForm, position: Number(e.target.value) })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           />
                         </div>
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Status *</label>
                           <select
                             value={moduleForm.status_id}
                             onChange={(e) => setModuleForm({ ...moduleForm, status_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.statuses.map((s: any) => (
                               <option key={s.id} value={s.id}>{s.description}</option>
@@ -2861,18 +3624,18 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                       </div>
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#d2d2d7]">
                         <button
                           type="button"
                           onClick={() => setModuleModalOpen(false)}
-                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                          className="bg-white border border-[#d2d2d7] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
                         >
                           Cancel
                         </button>
                         <button
                           type="submit"
                           disabled={loading}
-                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                          className="bg-[#0066cc] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 disabled:opacity-50"
                         >
                           {loading ? "Saving..." : "Save Module"}
                         </button>
@@ -2884,28 +3647,28 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
               {/* Lesson Modal */}
               {lessonModalOpen && (
-                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
-                    <h3 className="font-bold text-sm text-[#0F172A]">{editingLesson ? "Edit Lesson" : "Create New Lesson"}</h3>
+                <div className="fixed inset-0 bg-[#1d1d1f]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#d2d2d7] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#1d1d1f]">{editingLesson ? "Edit Lesson" : "Create New Lesson"}</h3>
                     <form onSubmit={handleLessonSubmit} className="space-y-4 text-xs">
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Lesson Title *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Lesson Title *</label>
                         <input
                           type="text"
                           required
                           value={lessonForm.title}
                           onChange={(e) => setLessonForm({ ...lessonForm, title: e.target.value })}
                           placeholder="e.g. 1.1 Intro to Components"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Lesson Type *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Lesson Type *</label>
                           <select
                             value={lessonForm.lesson_type_id}
                             onChange={(e) => setLessonForm({ ...lessonForm, lesson_type_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.lessonTypes.map((t: any) => (
                               <option key={t.id} value={t.id}>{t.description}</option>
@@ -2913,11 +3676,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Status *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Status *</label>
                           <select
                             value={lessonForm.status_id}
                             onChange={(e) => setLessonForm({ ...lessonForm, status_id: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             {acadLookups.statuses.map((s: any) => (
                               <option key={s.id} value={s.id}>{s.description}</option>
@@ -2927,23 +3690,23 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                       </div>
                       <div className="grid grid-cols-3 gap-3">
                         <div className="col-span-1">
-                          <label className="block font-semibold mb-1 text-[#475569]">Position Order *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Position Order *</label>
                           <input
                             type="number"
                             required
                             value={lessonForm.position}
                             onChange={(e) => setLessonForm({ ...lessonForm, position: Number(e.target.value) })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           />
                         </div>
                         <div className="col-span-1">
-                          <label className="block font-semibold mb-1 text-[#475569]">Duration (Mins) *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Duration (Mins) *</label>
                           <input
                             type="number"
                             required
                             value={lessonForm.duration}
                             onChange={(e) => setLessonForm({ ...lessonForm, duration: Number(e.target.value) })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           />
                         </div>
                         <div className="col-span-1 flex items-center pt-5">
@@ -2952,43 +3715,43 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                               type="checkbox"
                               checked={lessonForm.is_preview}
                               onChange={(e) => setLessonForm({ ...lessonForm, is_preview: e.target.checked })}
-                              className="rounded border-[#E2E8F0] text-[#2563EB] focus:ring-[#2563EB]"
+                              className="rounded border-[#d2d2d7] text-[#0066cc] focus:ring-[#0066cc]"
                             />
-                            <span className="font-semibold text-[#475569]">Is Preview?</span>
+                            <span className="font-semibold text-[#86868b]">Is Preview?</span>
                           </label>
                         </div>
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Video Lecture URL</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Video Lecture URL</label>
                         <input
                           type="text"
                           value={lessonForm.video_url}
                           onChange={(e) => setLessonForm({ ...lessonForm, video_url: e.target.value })}
                           placeholder="e.g. https://youtube.com/... or Vimeo"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Structured Content (JSON)</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Structured Content (JSON)</label>
                         <textarea
                           value={lessonForm.content_json_str}
                           onChange={(e) => setLessonForm({ ...lessonForm, content_json_str: e.target.value })}
                           rows={4}
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A] resize-none"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f] resize-none"
                         />
                       </div>
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#d2d2d7]">
                         <button
                           type="button"
                           onClick={() => setLessonModalOpen(false)}
-                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                          className="bg-white border border-[#d2d2d7] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
                         >
                           Cancel
                         </button>
                         <button
                           type="submit"
                           disabled={loading}
-                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                          className="bg-[#0066cc] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 disabled:opacity-50"
                         >
                           {loading ? "Saving..." : "Save Lesson"}
                         </button>
@@ -3000,28 +3763,28 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
               {/* Resource Attachment Modal */}
               {resourceModalOpen && (
-                <div className="fixed inset-0 bg-[#0F172A]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
-                  <div className="bg-white border border-[#E2E8F0] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
-                    <h3 className="font-bold text-sm text-[#0F172A]">Attach Lesson Resource</h3>
+                <div className="fixed inset-0 bg-[#1d1d1f]/50 flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="bg-white border border-[#d2d2d7] rounded-xl max-w-md w-full p-6 shadow-xl space-y-4">
+                    <h3 className="font-bold text-sm text-[#1d1d1f]">Attach Lesson Resource</h3>
                     <form onSubmit={handleResourceSubmit} className="space-y-4 text-xs">
                       <div>
-                        <label className="block font-semibold mb-1 text-[#475569]">Resource Title *</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Resource Title *</label>
                         <input
                           type="text"
                           required
                           value={resourceForm.title}
                           onChange={(e) => setResourceForm({ ...resourceForm, title: e.target.value })}
                           placeholder="e.g. Component Cheatsheet PDF"
-                          className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Resource Type *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Resource Type *</label>
                           <select
                             value={resourceForm.resource_type}
                             onChange={(e) => setResourceForm({ ...resourceForm, resource_type: e.target.value })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           >
                             <option value="link">External URL Link</option>
                             <option value="file">File Attachment</option>
@@ -3031,53 +3794,53 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           </select>
                         </div>
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">Position Order *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">Position Order *</label>
                           <input
                             type="number"
                             required
                             value={resourceForm.position}
                             onChange={(e) => setResourceForm({ ...resourceForm, position: Number(e.target.value) })}
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           />
                         </div>
                       </div>
                       {resourceForm.resource_type === "file" || resourceForm.resource_type === "pdf" ? (
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">File URL *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">File URL *</label>
                           <input
                             type="text"
                             required
                             value={resourceForm.file_url}
                             onChange={(e) => setResourceForm({ ...resourceForm, file_url: e.target.value })}
                             placeholder="e.g. https://storage.hynox.com/file.pdf"
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           />
                         </div>
                       ) : (
                         <div>
-                          <label className="block font-semibold mb-1 text-[#475569]">External URL *</label>
+                          <label className="block font-semibold mb-1 text-[#86868b]">External URL *</label>
                           <input
                             type="text"
                             required
                             value={resourceForm.external_url}
                             onChange={(e) => setResourceForm({ ...resourceForm, external_url: e.target.value })}
                             placeholder="e.g. https://github.com/... or external link"
-                            className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
                           />
                         </div>
                       )}
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#d2d2d7]">
                         <button
                           type="button"
                           onClick={() => setResourceModalOpen(false)}
-                          className="bg-white border border-[#E2E8F0] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
+                          className="bg-white border border-[#d2d2d7] hover:bg-slate-50 px-3.5 py-2 rounded-lg font-semibold"
                         >
                           Cancel
                         </button>
                         <button
                           type="submit"
                           disabled={loading}
-                          className="bg-[#2563EB] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 disabled:opacity-50"
+                          className="bg-[#0066cc] text-white px-4 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 disabled:opacity-50"
                         >
                           {loading ? "Adding..." : "Add Resource"}
                         </button>
@@ -3093,6 +3856,33 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
         </div>
 
       </div>
+
+      {/* Looped Animated Brand Footer */}
+      <div className="border-t border-[#d2d2d7]/30 bg-white py-8 text-center select-none shadow-sm flex-shrink-0 mt-auto w-full">
+        <style dangerouslySetInnerHTML={{ __html: `
+          @keyframes shimmer {
+            0% { background-position: -200% center; }
+            100% { background-position: 200% center; }
+          }
+          .apple-shimmer-text {
+            background: linear-gradient(90deg, #1d1d1f 20%, #0066cc 50%, #1d1d1f 80%);
+            background-size: 200% auto;
+            color: transparent;
+            -webkit-background-clip: text;
+            background-clip: text;
+            animation: shimmer 4s linear infinite;
+          }
+        `}} />
+        <h1 className="apple-shimmer-text text-xl md:text-2xl font-extrabold tracking-tight font-sans title-font">
+          Hynox Campus
+        </h1>
+        <p className="text-[8px] text-[#86868b] mt-1 font-semibold tracking-wider uppercase">
+          Administrative Command Center
+        </p>
+      </div>
+
+      {renderUserDetailDrawer()}
+      {renderTeacherDetailDrawer()}
 
     </div>
   );

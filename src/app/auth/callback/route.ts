@@ -4,7 +4,10 @@ import { createClient } from "@/utils/supabase/server";
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const host = request.headers.get("x-forwarded-host");
-  const proto = request.headers.get("x-forwarded-proto") || "https";
+  let proto = request.headers.get("x-forwarded-proto") || "https";
+  if (host && (host.includes("localhost") || host.includes("127.0.0.1"))) {
+    proto = "http";
+  }
   const publicOrigin = host ? `${proto}://${host}` : (process.env.NEXT_PUBLIC_APP_URL || origin);
   const code = searchParams.get("code");
   const next = searchParams.get("next") || "/";

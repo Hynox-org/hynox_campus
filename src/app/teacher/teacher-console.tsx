@@ -25,7 +25,11 @@ import {
   HelpCircle,
   Save,
   ChevronRight,
-  ShieldAlert
+  ShieldAlert,
+  Menu,
+  Award,
+  X,
+  RefreshCw
 } from "lucide-react";
 import { 
   reviewProjectSubmissionAction,
@@ -35,10 +39,12 @@ import {
   createChallengeExampleAction,
   createChallengeTestCaseAction,
   getQuizDetailsAction,
+  getQuizSessionDetailsAction,
   getProgrammingChallengeDetailsAction,
   listProjectSubmissionsAction,
   listChallengeSubmissionsAction,
-  listAllActivitiesAction
+  listAllActivitiesAction,
+  listQuizAttemptsAction
 } from "@/app/actions/learning-actions";
 import {
   listTenantCoursesAction,
@@ -50,12 +56,16 @@ import {
   createLessonResourceAction,
   deleteLessonResourceAction,
   listLessonResourcesAction,
-  listProgramsAction
+  listProgramsAction,
+  createModuleAction,
+  deleteModuleAction,
+  deleteLessonAction
 } from "@/app/actions/academic-actions";
 import {
   listCohortsAction,
   listEnrollmentsAction
 } from "@/app/actions/delivery-actions";
+import DeliveryManager from "@/app/admin/delivery-manager";
 
 interface TeacherConsoleProps {
   teacherId: string;
@@ -80,8 +90,36 @@ export default function TeacherConsole({
   assignedInstitutions,
   initialPrograms
 }: TeacherConsoleProps) {
-  const [activeTab, setActiveTab] = useState<"overview" | "roster" | "projects" | "challenges" | "activities-manager" | "syllabus">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "roster" | "projects" | "challenges" | "activities-manager" | "syllabus" | "delivery" | "auditor">("overview");
+  const [activeParentTab, setActiveParentTab] = useState<"overview" | "students" | "assessments" | "curriculum">("overview");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
+  // Unified Auditor states
+  const [quizAttempts, setQuizAttempts] = useState<any[]>([]);
+  const [selectedQuizAttempt, setSelectedQuizAttempt] = useState<any>(null);
+  const [auditorFilter, setAuditorFilter] = useState<"all" | "quiz" | "project" | "programming">("all");
+  const [quizAttemptSession, setQuizAttemptSession] = useState<any>(null);
+  const [loadingQuizSession, setLoadingQuizSession] = useState(false);
+
+  useEffect(() => {
+    if (selectedQuizAttempt) {
+      setLoadingQuizSession(true);
+      getQuizSessionDetailsAction(selectedQuizAttempt.id).then(res => {
+        setQuizAttemptSession(res);
+        setLoadingQuizSession(false);
+      });
+    } else {
+      setQuizAttemptSession(null);
+    }
+  }, [selectedQuizAttempt]);
+
+  // Syllabus Editor State
+  const [newModuleTitle, setNewModuleTitle] = useState("");
+  const [newModulePosition, setNewModulePosition] = useState(1);
+  const [newLessonPosition, setNewLessonPosition] = useState(1);
+  const [moduleFormOpen, setModuleFormOpen] = useState(false);
+  const [lessonFormOpen, setLessonFormOpen] = useState(false);
+
   // Active selected institution and programs
   const [selectedInstId, setSelectedInstId] = useState<string>(assignedInstitutions[0]?.id || tenantId || "");
   const [programsList, setProgramsList] = useState<any[]>(initialPrograms || []);
@@ -254,9 +292,18 @@ export default function TeacherConsole({
         setCoursesList([]);
       }
 
+      // Fetch quiz attempts
+      const quizAttsRes = await listQuizAttemptsAction(selectedInstId);
+      if (quizAttsRes.attempts) {
+        setQuizAttempts(quizAttsRes.attempts);
+      } else {
+        setQuizAttempts([]);
+      }
+
       // Reset selection forms
       setSelectedProjectSub(null);
       setSelectedChallengeSub(null);
+      setSelectedQuizAttempt(null);
       setSelectedCourseId("");
       setSelectedLessonId("");
       setSyllabusCourseId("");
@@ -320,6 +367,15 @@ export default function TeacherConsole({
     }
   }, [syllabusLessonId, syllabusLessons]);
 
+  // Sync grading form inputs when a project submission is selected
+  useEffect(() => {
+    if (selectedProjectSub) {
+      setScore(selectedProjectSub.review?.score ?? selectedProjectSub.max_score ?? 100);
+      setFeedback(selectedProjectSub.review?.feedback_comments ?? "");
+      setReviewStatus(selectedProjectSub.review?.review_status ?? "approved");
+    }
+  }, [selectedProjectSub]);
+
   // Filter enrollments and submissions to program-scoped cohorts
   const filteredEnrollments = enrollments.filter(e => filteredCohortIds.includes(e.cohort_id));
   const activeStudentsCount = filteredEnrollments.filter(e => e.status_code === "active").length;
@@ -337,6 +393,67 @@ export default function TeacherConsole({
 
   // Filter courses list to selected program
   const filteredCourses = coursesList.filter(c => !selectedProgramId || c.program_id === selectedProgramId);
+
+  const combinedSubmissions = React.useMemo(() => {
+    const list: any[] = [];
+    
+    // Add Projects
+    filteredProjectSubmissions.forEach(sub => {
+      list.push({
+        id: sub.id,
+        type: "project",
+        title: sub.project_title,
+        studentName: sub.student?.full_name || sub.student?.email || "Unknown Student",
+        submittedAt: new Date(sub.submitted_at),
+        score: sub.review?.score,
+        maxScore: sub.max_score,
+        status: sub.review ? sub.review.review_status : "pending",
+        original: sub
+      });
+    });
+
+    // Add Challenges
+    filteredChallengeSubmissions.forEach(sub => {
+      list.push({
+        id: sub.id,
+        type: "programming",
+        title: sub.challenge_title,
+        studentName: sub.student?.full_name || sub.student?.email || "Unknown Student",
+        submittedAt: new Date(sub.submitted_at),
+        score: sub.result?.score,
+        maxScore: sub.max_score,
+        status: sub.submission_status_code,
+        original: sub
+      });
+    });
+
+    // Add Quiz attempts
+    quizAttempts.forEach(att => {
+      const isStudentInCohort = filteredEnrollments.some(e => e.user_id === att.student_id);
+      if (!isStudentInCohort) return;
+      
+      list.push({
+        id: att.id,
+        type: "quiz",
+        title: att.quiz_title,
+        studentName: att.student?.full_name || att.student?.email || "Unknown Student",
+        submittedAt: att.submitted_at ? new Date(att.submitted_at) : new Date(att.started_at),
+        score: att.score,
+        maxScore: att.max_score,
+        status: att.submitted_at ? "submitted" : "in_progress",
+        original: att
+      });
+    });
+
+    // Sort by submission date (newest first)
+    list.sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime());
+
+    // Filter by type
+    if (auditorFilter !== "all") {
+      return list.filter(item => item.type === auditorFilter);
+    }
+    return list;
+  }, [filteredProjectSubmissions, filteredChallengeSubmissions, quizAttempts, filteredEnrollments, auditorFilter]);
 
   // Form submit: project grading
   const handleReviewSubmit = (e: React.FormEvent) => {
@@ -538,6 +655,90 @@ export default function TeacherConsole({
         setTestCasesList([]);
       } else {
         setStatusMessage({ type: "error", text: result.error || "Failed to schedule activity assignment." });
+      }
+    });
+  };
+
+  const handleCreateModule = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!syllabusCourseId) return;
+
+    startTransition(async () => {
+      const res = await createModuleAction({
+        course_id: syllabusCourseId,
+        title: newModuleTitle,
+        position: Number(newModulePosition),
+        tenant_id: selectedInstId,
+        institution_id: selectedInstId
+      });
+
+      if (res.success && res.module) {
+        setStatusMessage({ type: "success", text: "New module created successfully!" });
+        setSyllabusModules(prev => [...prev, res.module].sort((a, b) => a.position - b.position));
+        setNewModuleTitle("");
+        setNewModulePosition(prev => prev + 1);
+        setModuleFormOpen(false);
+      } else {
+        setStatusMessage({ type: "error", text: res.error || "Failed to create module." });
+      }
+    });
+  };
+
+  const handleDeleteModule = (modId: string) => {
+    if (!window.confirm("Are you sure you want to delete this module and all its lessons?")) return;
+
+    startTransition(async () => {
+      const res = await deleteModuleAction(modId);
+      if (res.success) {
+        setStatusMessage({ type: "success", text: "Module deleted successfully." });
+        setSyllabusModules(prev => prev.filter(m => m.id !== modId));
+        setSyllabusLessons(prev => prev.filter(l => l.module_id !== modId));
+        setSyllabusModuleId("");
+        setSyllabusLessonId("");
+      } else {
+        setStatusMessage({ type: "error", text: res.error || "Failed to delete module." });
+      }
+    });
+  };
+
+  const handleCreateLesson = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!syllabusModuleId) return;
+
+    startTransition(async () => {
+      const res = await createLessonAction({
+        module_id: syllabusModuleId,
+        title: newLessonTitle,
+        duration: Number(newLessonDuration),
+        position: Number(newLessonPosition),
+        tenant_id: selectedInstId,
+        institution_id: selectedInstId
+      });
+
+      if (res.success && res.lesson) {
+        setStatusMessage({ type: "success", text: "New lesson created successfully!" });
+        setSyllabusLessons(prev => [...prev, res.lesson].sort((a, b) => a.position - b.position));
+        setNewLessonTitle("");
+        setNewLessonDuration(30);
+        setNewLessonPosition(prev => prev + 1);
+        setLessonFormOpen(false);
+      } else {
+        setStatusMessage({ type: "error", text: res.error || "Failed to create lesson." });
+      }
+    });
+  };
+
+  const handleDeleteLesson = (lesId: string) => {
+    if (!window.confirm("Are you sure you want to delete this lesson?")) return;
+
+    startTransition(async () => {
+      const res = await deleteLessonAction(lesId);
+      if (res.success) {
+        setStatusMessage({ type: "success", text: "Lesson deleted successfully." });
+        setSyllabusLessons(prev => prev.filter(l => l.id !== lesId));
+        setSyllabusLessonId("");
+      } else {
+        setStatusMessage({ type: "error", text: res.error || "Failed to delete lesson." });
       }
     });
   };
@@ -998,7 +1199,7 @@ export default function TeacherConsole({
                                               }`}>
                                               {oIdx === 0 ? "A" : oIdx === 1 ? "B" : oIdx === 2 ? "C" : "D"}
                                             </div>
-                                            <span>{opt}</span>
+                                            <span>{(opt as any).option_text || opt}</span>
                                             {isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#16A34A]/20 px-1.5 py-0.5 rounded text-[#16A34A]">Correct Option</span>}
                                             {isSelected && !isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#DC2626]/20 px-1.5 py-0.5 rounded text-[#DC2626]">Submitted Answer</span>}
                                           </div>
@@ -1108,6 +1309,7 @@ export default function TeacherConsole({
                                   <button 
                                     onClick={() => {
                                       setSelectedProjectSub(sub);
+                                      setActiveParentTab("assessments");
                                       setActiveTab("projects");
                                       setSelectedStudent(null);
                                     }}
@@ -1219,14 +1421,410 @@ export default function TeacherConsole({
     );
   };
 
+  const renderQuizAuditorDrawer = () => {
+    if (!selectedQuizAttempt) return null;
+    
+    return (
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-end animate-fadeIn">
+        <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slideOver">
+          
+          {/* Drawer Header */}
+          <div className="p-6 border-b border-[#E2E8F0] flex items-center justify-between bg-slate-50 shrink-0">
+            <div>
+              <h3 className="text-sm font-bold text-[#0F172A]">Quiz Attempt Details</h3>
+              <p className="text-xs text-[#475569]">
+                Student: <strong className="text-[#0F172A]">{selectedQuizAttempt.student?.full_name || selectedQuizAttempt.student?.email}</strong>
+              </p>
+            </div>
+            <button 
+              onClick={() => setSelectedQuizAttempt(null)}
+              className="text-[#475569] hover:text-[#0F172A] p-2 hover:bg-slate-200/50 rounded-lg transition-all"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Drawer Content */}
+          <div className="p-6 overflow-y-auto flex-1 space-y-6">
+            <div className="grid grid-cols-2 gap-4 bg-[#F8FAFC] p-4 border border-[#E2E8F0] rounded-xl text-xs">
+              <div>
+                <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Quiz Activity</span>
+                <span className="font-bold text-[#0F172A]">{selectedQuizAttempt.quiz_title}</span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Scored Points</span>
+                <span className="font-bold text-[#2563EB] text-sm">{selectedQuizAttempt.score} / {selectedQuizAttempt.max_score} pts</span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Attempt Number</span>
+                <span className="font-semibold text-[#0F172A]">Attempt #{selectedQuizAttempt.attempt_number}</span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Submission Date</span>
+                <span className="font-semibold text-[#0F172A]">
+                  {selectedQuizAttempt.submitted_at 
+                    ? new Date(selectedQuizAttempt.submitted_at).toLocaleString() 
+                    : "In Progress"}
+                </span>
+              </div>
+            </div>
+
+            <hr className="border-[#E2E8F0]" />
+
+            <div>
+              <h4 className="text-xs font-bold text-[#0F172A] uppercase mb-3 tracking-wider">Submitted Answers Verification</h4>
+              
+              {loadingQuizSession ? (
+                <div className="text-center py-12 text-xs text-[#475569] font-medium flex items-center justify-center gap-2">
+                  <RefreshCw size={14} className="animate-spin" /> Retrieving session questions and selected answers...
+                </div>
+              ) : !quizAttemptSession || !quizAttemptSession.questions ? (
+                <div className="text-center py-6 text-xs text-[#475569] border border-dashed border-[#E2E8F0] rounded-xl">
+                  No responses logged for this quiz session.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {quizAttemptSession.questions.map((q: any, qIdx: number) => {
+                    const isCorrect = q.selectedIndex === q.correctIndex;
+                    return (
+                      <div key={q.id || qIdx} className="p-4 bg-white border border-[#E2E8F0] rounded-xl text-xs space-y-2 shadow-sm">
+                        <div className="font-semibold text-[#0F172A] flex justify-between gap-4">
+                          <span>Q{qIdx + 1}: {q.text}</span>
+                          <span className={`font-black shrink-0 ${isCorrect ? "text-[#16A34A]" : "text-[#DC2626]"}`}>
+                            {isCorrect ? `+${q.points} pts` : "0 pts"}
+                          </span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 gap-1.5 pt-1.5">
+                          {q.options.map((opt: any, oIdx: number) => {
+                            const isSelected = q.selectedIndex === oIdx;
+                            const isAnsCorrect = q.correctIndex === oIdx;
+                            
+                            return (
+                              <div 
+                                key={oIdx} 
+                                className={`p-2.5 rounded-lg border flex items-center gap-2 text-[11px] ${
+                                  isAnsCorrect 
+                                    ? "bg-[#16A34A]/10 border-[#16A34A]/30 text-[#16A34A] font-bold" 
+                                    : isSelected 
+                                    ? "bg-[#DC2626]/10 border-[#DC2626]/30 text-[#DC2626] font-semibold" 
+                                    : "bg-white border-[#E2E8F0] text-[#475569]"
+                                }`}
+                              >
+                                <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center text-[8px] font-black shrink-0 ${
+                                  isAnsCorrect 
+                                    ? "bg-[#16A34A] border-transparent text-white" 
+                                    : isSelected 
+                                    ? "bg-[#DC2626] border-transparent text-white" 
+                                    : "border-slate-300"
+                                  }`}>
+                                  {oIdx === 0 ? "A" : oIdx === 1 ? "B" : oIdx === 2 ? "C" : oIdx === 3 ? "D" : String(oIdx + 1)}
+                                </div>
+                                <span>{opt.option_text || opt}</span>
+                                {isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#16A34A]/20 px-1.5 py-0.5 rounded text-[#16A34A]">Correct Option</span>}
+                                {isSelected && !isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#DC2626]/20 px-1.5 py-0.5 rounded text-[#DC2626]">Submitted Answer</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="p-4 border-t border-[#E2E8F0] bg-slate-50 flex justify-end shrink-0">
+            <button 
+              onClick={() => setSelectedQuizAttempt(null)}
+              className="bg-white border border-[#E2E8F0] text-[#0F172A] hover:bg-slate-100 font-bold text-xs py-2 px-5 rounded-xl transition-all"
+            >
+              Close Auditor details
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
+  const renderProjectAuditorDrawer = () => {
+    if (!selectedProjectSub || activeTab !== "auditor") return null;
+
+    return (
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-end animate-fadeIn">
+        <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slideOver">
+          
+          {/* Drawer Header */}
+          <div className="p-6 border-b border-[#E2E8F0] flex items-center justify-between bg-slate-50 shrink-0">
+            <div>
+              <h3 className="text-sm font-bold text-[#0F172A]">Project Submission Auditor</h3>
+              <p className="text-xs text-[#475569]">
+                Student: <strong className="text-[#0F172A]">{selectedProjectSub.student?.full_name || selectedProjectSub.student?.email}</strong>
+              </p>
+            </div>
+            <button 
+              onClick={() => setSelectedProjectSub(null)}
+              className="text-[#475569] hover:text-[#0F172A] p-2 hover:bg-slate-200/50 rounded-lg transition-all"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Drawer Content */}
+          <div className="p-6 overflow-y-auto flex-1">
+            <form onSubmit={handleReviewSubmit} className="space-y-6">
+              <div>
+                <h3 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider mb-2">
+                  Project: {selectedProjectSub.project_title}
+                </h3>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 bg-[#F8FAFC] p-4 border border-[#E2E8F0] rounded-xl text-xs">
+                <div>
+                  <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Status</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block ${
+                    !selectedProjectSub.review || selectedProjectSub.review.review_status === "pending"
+                      ? "bg-[#F59E0B]/10 text-[#F59E0B]"
+                      : selectedProjectSub.review.review_status === "approved"
+                      ? "bg-[#16A34A]/10 text-[#16A34A]"
+                      : "bg-[#DC2626]/10 text-[#DC2626]"
+                  }`}>
+                    {!selectedProjectSub.review ? "Pending Review" : selectedProjectSub.review.review_status}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Max Score</span>
+                  <span className="font-semibold text-[#0F172A]">{selectedProjectSub.max_score} pts</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Submitted At</span>
+                  <span className="font-semibold text-[#0F172A]">
+                    {new Date(selectedProjectSub.submitted_at).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-1">
+                  Submitted GitHub URL
+                </label>
+                <a 
+                  href={selectedProjectSub.github_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-xs text-[#2563EB] font-semibold break-all hover:underline flex items-center gap-1"
+                >
+                  {selectedProjectSub.github_url}
+                  <ExternalLink size={12} />
+                </a>
+              </div>
+
+              {selectedProjectSub.submission_notes && (
+                <div>
+                  <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-1">
+                    Student Submission Notes
+                  </label>
+                  <p className="text-xs bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-3 text-[#0F172A]">
+                    {selectedProjectSub.submission_notes}
+                  </p>
+                </div>
+              )}
+
+              <hr className="border-[#E2E8F0]" />
+
+              <div className="space-y-4">
+                <h4 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">Evaluation & Grading</h4>
+                
+                <div>
+                  <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-1">
+                    Assign Status
+                  </label>
+                  <select
+                    value={reviewStatus}
+                    onChange={(e) => setReviewStatus(e.target.value)}
+                    className="bg-white border border-[#E2E8F0] px-3 py-2 rounded-xl text-xs font-semibold focus:outline-none focus:border-[#2563EB] w-full"
+                  >
+                    <option value="approved">Approved & Completed</option>
+                    <option value="revision_requested">Revision Requested</option>
+                    <option value="rejected">Rejected / Failed</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block">
+                      Assigned Score
+                    </label>
+                    <span className="text-[10px] font-bold text-[#475569]">
+                      Max Score: {selectedProjectSub.max_score}
+                    </span>
+                  </div>
+                  <input 
+                    type="number"
+                    max={selectedProjectSub.max_score}
+                    min={0}
+                    value={score}
+                    onChange={(e) => setScore(Number(e.target.value))}
+                    className="bg-white border border-[#E2E8F0] px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-[#2563EB] w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-1">
+                    Feedback Comments
+                  </label>
+                  <textarea 
+                    rows={4}
+                    value={feedback}
+                    onChange={(e) => setFeedback(e.target.value)}
+                    placeholder="Add review feedback for the student..."
+                    className="bg-white border border-[#E2E8F0] px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-[#2563EB] w-full resize-none"
+                  />
+                </div>
+              </div>
+
+              <button 
+                type="submit"
+                disabled={isPending}
+                className="w-full bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-slate-300 text-white font-bold text-xs py-2.5 rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+              >
+                {isPending ? "Submitting..." : "Submit Review Grade"}
+              </button>
+            </form>
+          </div>
+
+          <div className="p-4 border-t border-[#E2E8F0] bg-slate-50 flex justify-end shrink-0">
+            <button 
+              onClick={() => setSelectedProjectSub(null)}
+              className="bg-white border border-[#E2E8F0] text-[#0F172A] hover:bg-slate-100 font-bold text-xs py-2 px-5 rounded-xl transition-all"
+            >
+              Close Auditor details
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
+  const renderChallengeAuditorDrawer = () => {
+    if (!selectedChallengeSub || activeTab !== "auditor") return null;
+
+    return (
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex justify-end animate-fadeIn">
+        <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col animate-slideOver">
+          
+          {/* Drawer Header */}
+          <div className="p-6 border-b border-[#E2E8F0] flex items-center justify-between bg-slate-50 shrink-0">
+            <div>
+              <h3 className="text-sm font-bold text-[#0F172A]">Challenge Submission Auditor</h3>
+              <p className="text-xs text-[#475569]">
+                Student: <strong className="text-[#0F172A]">{selectedChallengeSub.student?.full_name || selectedChallengeSub.student?.email}</strong>
+              </p>
+            </div>
+            <button 
+              onClick={() => setSelectedChallengeSub(null)}
+              className="text-[#475569] hover:text-[#0F172A] p-2 hover:bg-slate-200/50 rounded-lg transition-all"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Drawer Content */}
+          <div className="p-6 overflow-y-auto flex-1 space-y-6">
+            <div>
+              <h3 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider mb-1">
+                Challenge Name
+              </h3>
+              <span className="text-xs font-bold">{selectedChallengeSub.challenge_title}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 bg-[#F8FAFC] p-4 border border-[#E2E8F0] rounded-xl text-xs">
+              <div>
+                <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Language Runtime</span>
+                <span className="text-xs font-semibold uppercase">{selectedChallengeSub.language}</span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Status</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block uppercase ${
+                  selectedChallengeSub.submission_status_code === "accepted"
+                    ? "bg-[#16A34A]/10 text-[#16A34A]"
+                    : selectedChallengeSub.submission_status_code === "pending" || selectedChallengeSub.submission_status_code === "running"
+                    ? "bg-[#F59E0B]/10 text-[#F59E0B]"
+                    : "bg-[#DC2626]/10 text-[#DC2626]"
+                }`}>
+                  {selectedChallengeSub.submission_status_code.replace(/_/g, " ")}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-[#475569] uppercase block mb-1">Submitted At</span>
+                <span className="font-semibold text-[#0F172A]">
+                  {new Date(selectedChallengeSub.submitted_at).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            <hr className="border-[#E2E8F0]" />
+
+            <div>
+              <span className="text-[10px] font-bold text-[#475569] uppercase tracking-wide block mb-1">Submitted Code Snippet</span>
+              <pre className="p-4 bg-[#0F172A] text-white text-[11px] font-mono rounded-xl overflow-x-auto max-h-80 shadow-inner">
+                <code>{selectedChallengeSub.source_code}</code>
+              </pre>
+            </div>
+
+            {selectedChallengeSub.result && (
+              <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-4 space-y-2 text-xs">
+                <span className="font-bold text-[#0F172A] block uppercase tracking-wide text-[10px]">Judge Execution Results</span>
+                <div className="flex justify-between">
+                  <span className="text-[#475569]">Passed Test Cases:</span>
+                  <strong className="text-[#16A34A]">{selectedChallengeSub.result.passed_test_cases} / {selectedChallengeSub.result.total_test_cases}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#475569]">Execution Time:</span>
+                  <strong>{selectedChallengeSub.result.execution_time_ms} ms</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#475569]">Assigned Grade Score:</span>
+                  <strong className="text-[#2563EB]">{selectedChallengeSub.result.score} pts</strong>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="p-4 border-t border-[#E2E8F0] bg-slate-50 flex justify-end shrink-0">
+            <button 
+              onClick={() => setSelectedChallengeSub(null)}
+              className="bg-white border border-[#E2E8F0] text-[#0F172A] hover:bg-slate-100 font-bold text-xs py-2 px-5 rounded-xl transition-all"
+            >
+              Close Auditor details
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       
       {/* Top Banner & Multi-Tenant Campus Selector */}
       <div className="bg-white border border-[#E2E8F0] p-6 rounded-2xl shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-        <div>
-          <h2 className="text-base font-bold text-[#0F172A]">Instructor Multi-Campus Hub</h2>
-          <p className="text-xs text-[#475569]">Select your active assigned campus institution and academic program to filter workspace actions.</p>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="p-2 hover:bg-slate-50 rounded-xl text-[#0F172A] border border-[#E2E8F0] transition-all cursor-pointer mr-1"
+            title="Toggle Sidebar"
+          >
+            <Menu size={16} />
+          </button>
+          <div>
+            <h2 className="text-base font-bold text-[#0F172A]">Instructor Multi-Campus Hub</h2>
+            <p className="text-xs text-[#475569]">Select your active assigned campus institution and academic program to filter workspace actions.</p>
+          </div>
         </div>
 
         {assignedInstitutions.length === 0 ? (
@@ -1274,85 +1872,182 @@ export default function TeacherConsole({
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8 min-h-[calc(100vh-8rem)]">
-        {/* Sidebar Navigation */}
-        <aside className="w-full lg:w-64 shrink-0 bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm h-fit">
-          <div className="mb-6 px-2">
-            <h3 className="text-xs font-bold text-[#475569] uppercase tracking-wider">Navigation</h3>
+        {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
+        <div className="w-14 shrink-0 flex flex-col items-center gap-4 py-2 border-r border-[#E2E8F0] pr-4">
+          <button
+            onClick={() => {
+              setActiveParentTab("overview");
+              setActiveTab("overview");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "overview"
+                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
+            }`}
+            title="Overview Space"
+          >
+            <Layers size={18} />
+          </button>
+          
+          <button
+            onClick={() => {
+              setActiveParentTab("students");
+              setActiveTab("roster");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "students"
+                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
+            }`}
+            title="Student Roster"
+          >
+            <Users size={18} />
+          </button>
+          
+          <button
+            onClick={() => {
+              setActiveParentTab("assessments");
+              setActiveTab("projects");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "assessments"
+                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
+            }`}
+            title="Assessments & Grading"
+          >
+            <CheckSquare size={18} />
+          </button>
+          
+          <button
+            onClick={() => {
+              setActiveParentTab("curriculum");
+              setActiveTab("activities-manager");
+            }}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              activeParentTab === "curriculum"
+                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
+            }`}
+            title="Curriculum & Syllabus"
+          >
+            <BookOpen size={18} />
+          </button>
+        </div>
+
+        {/* SECONDARY SIDEBAR (Sub-options list) */}
+        {isSidebarOpen && (
+          <div className="w-52 shrink-0 flex flex-col gap-2 border-r border-[#E2E8F0] pr-4">
+            <h4 className="text-[10px] font-bold text-[#475569] uppercase tracking-wider px-2 mb-2">
+              {activeParentTab === "overview" && "Overview Space"}
+              {activeParentTab === "students" && "Student Hub"}
+              {activeParentTab === "assessments" && "Auditing & Grading"}
+              {activeParentTab === "curriculum" && "Curriculum Space"}
+            </h4>
+            
+            {activeParentTab === "overview" && (
+              <button
+                onClick={() => setActiveTab("overview")}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                  activeTab === "overview"
+                    ? "bg-[#2563EB]/10 text-[#2563EB]"
+                    : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                }`}
+              >
+                Dashboard Overview
+              </button>
+            )}
+            {activeParentTab === "students" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("roster")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "roster"
+                      ? "bg-[#2563EB]/10 text-[#2563EB]"
+                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  }`}
+                >
+                  Student Directory
+                </button>
+                <button
+                  onClick={() => setActiveTab("delivery")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "delivery"
+                      ? "bg-[#2563EB]/10 text-[#2563EB]"
+                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  }`}
+                >
+                  Cohorts & Delivery
+                </button>
+              </>
+            )}
+
+            {activeParentTab === "assessments" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("auditor")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "auditor"
+                      ? "bg-[#2563EB]/10 text-[#2563EB]"
+                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  }`}
+                >
+                  Submissions Auditor
+                </button>
+                <button
+                  onClick={() => setActiveTab("projects")}
+                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "projects"
+                      ? "bg-[#2563EB]/10 text-[#2563EB]"
+                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  }`}
+                >
+                  <span>Project Validator</span>
+                  {pendingProjectCount > 0 && (
+                    <span className="bg-[#DC2626] text-white px-2 py-0.5 rounded-full text-[9px] font-bold animate-pulse">
+                      {pendingProjectCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab("challenges")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "challenges"
+                      ? "bg-[#2563EB]/10 text-[#2563EB]"
+                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  }`}
+                >
+                  Challenge Auditor
+                </button>
+              </>
+            )}
+
+            {activeParentTab === "curriculum" && (
+              <>
+                <button
+                  onClick={() => setActiveTab("activities-manager")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "activities-manager"
+                      ? "bg-[#2563EB]/10 text-[#2563EB]"
+                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  }`}
+                >
+                  Activities Builder
+                </button>
+                <button
+                  onClick={() => setActiveTab("syllabus")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "syllabus"
+                      ? "bg-[#2563EB]/10 text-[#2563EB]"
+                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  }`}
+                >
+                  Course Syllabus
+                </button>
+              </>
+            )}
           </div>
-          <nav className="flex flex-col gap-1">
-            <button
-              onClick={() => { setActiveTab("overview"); setStatusMessage(null); }}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === "overview" 
-                  ? "bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20" 
-                  : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
-              }`}
-            >
-              <Layers size={16} />
-              Overview
-            </button>
-            <button
-              onClick={() => { setActiveTab("roster"); setStatusMessage(null); }}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === "roster" 
-                  ? "bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20" 
-                  : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
-              }`}
-            >
-              <Users size={16} />
-              Cohort Roster
-            </button>
-            <button
-              onClick={() => { setActiveTab("projects"); setStatusMessage(null); }}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === "projects" 
-                  ? "bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20" 
-                  : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
-              }`}
-            >
-              <CheckSquare size={16} />
-              Project Validator
-              {pendingProjectCount > 0 && (
-                <span className="ml-auto bg-[#DC2626] text-white px-2 py-0.5 rounded-full text-[10px] font-bold animate-pulse">
-                  {pendingProjectCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => { setActiveTab("challenges"); setStatusMessage(null); }}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === "challenges" 
-                  ? "bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20" 
-                  : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
-              }`}
-            >
-              <Code2 size={16} />
-              Challenge Auditor
-            </button>
-            <button
-              onClick={() => { setActiveTab("activities-manager"); setStatusMessage(null); }}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === "activities-manager" 
-                  ? "bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20" 
-                  : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
-              }`}
-            >
-              <Plus size={16} />
-              Activities Manager
-            </button>
-            <button
-              onClick={() => { setActiveTab("syllabus"); setStatusMessage(null); }}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === "syllabus" 
-                  ? "bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/20" 
-                  : "text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]"
-              }`}
-            >
-              <BookOpen size={16} />
-              Course content & Videos
-            </button>
-          </nav>
-        </aside>
+        )}
 
         {/* Main Content Area */}
         <main className="flex-1 min-w-0 space-y-6">
@@ -1365,6 +2060,107 @@ export default function TeacherConsole({
                 : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
             }`}>
               {statusMessage.text}
+            </div>
+          )}
+
+          {/* TAB: COHORTS & DELIVERY */}
+          {activeTab === "delivery" && (
+            <div className="animate-fadeIn">
+              <DeliveryManager institutions={assignedInstitutions} initialTab="cohorts" />
+            </div>
+          )}
+
+          {/* TAB: UNIFIED SUBMISSIONS AUDITOR */}
+          {activeTab === "auditor" && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="bg-white border border-[#E2E8F0] rounded-2xl p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-[#E2E8F0]">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#0F172A]">Unified Submissions Auditor</h3>
+                    <p className="text-[10px] text-[#475569]">Audit, evaluate, and grade all student quiz attempts, project uploads, and code runs in real time.</p>
+                  </div>
+                  
+                  {/* Category filter */}
+                  <div className="flex gap-2 items-center">
+                    <span className="text-[10px] font-bold text-[#475569] uppercase tracking-wider">Filter:</span>
+                    <select
+                      value={auditorFilter}
+                      onChange={e => setAuditorFilter(e.target.value as any)}
+                      className="bg-white border border-[#E2E8F0] px-3 py-1.5 rounded-xl text-xs font-semibold focus:outline-none focus:border-[#2563EB]"
+                    >
+                      <option value="all">All Submissions</option>
+                      <option value="quiz">Quizzes</option>
+                      <option value="project">Projects</option>
+                      <option value="programming">Coding Challenges</option>
+                    </select>
+                  </div>
+                </div>
+
+                {combinedSubmissions.length === 0 ? (
+                  <div className="text-center py-12 text-xs text-[#475569] border border-dashed border-[#E2E8F0] rounded-xl mt-4">
+                    No submissions found matching the criteria.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[#E2E8F0] mt-2">
+                    {combinedSubmissions.map(item => (
+                      <div 
+                        key={`${item.type}-${item.id}`}
+                        onClick={() => {
+                          if (item.type === "quiz") {
+                            setSelectedQuizAttempt(item.original);
+                          } else if (item.type === "project") {
+                            setSelectedProjectSub(item.original);
+                          } else if (item.type === "programming") {
+                            setSelectedChallengeSub(item.original);
+                          }
+                        }}
+                        className="py-3.5 flex justify-between items-center gap-4 hover:bg-slate-50/50 px-2 rounded-xl transition-all cursor-pointer select-none"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wider border shrink-0 ${
+                              item.type === "quiz" 
+                                ? "bg-cyan-50 border-cyan-100 text-cyan-700" 
+                                : item.type === "project" 
+                                ? "bg-amber-50 border-amber-100 text-amber-700" 
+                                : "bg-purple-50 border-purple-100 text-purple-700"
+                            }`}>
+                              {item.type === "programming" ? "code challenge" : item.type}
+                            </span>
+                            <h4 className="text-xs font-bold text-[#0F172A] truncate">{item.title}</h4>
+                          </div>
+                          
+                          <p className="text-[10px] text-[#475569] mt-1">
+                            Submitted by <strong className="text-[#0F172A]">{item.studentName}</strong> • {new Date(item.submittedAt).toLocaleString()}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-3 shrink-0">
+                          {item.score !== undefined ? (
+                            <span className="text-xs font-bold text-[#0F172A]">
+                              {item.score} <span className="text-[10px] text-[#475569] font-normal">/ {item.maxScore} pts</span>
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-[#475569] bg-slate-100 px-2 py-0.5 rounded border">
+                              Not graded
+                            </span>
+                          )}
+
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase border ${
+                            item.status === "approved" || item.status === "accepted" || item.status === "completed" || item.status === "submitted"
+                              ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+                              : item.status === "pending" || item.status === "running" || item.status === "review_pending"
+                              ? "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20"
+                              : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                          }`}>
+                            {item.status.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1435,6 +2231,7 @@ export default function TeacherConsole({
                         <button 
                           onClick={() => {
                             setSelectedProjectSub(sub);
+                            setActiveParentTab("assessments");
                             setActiveTab("projects");
                           }}
                           className="flex items-center gap-1 bg-[#2563EB] hover:bg-[#1D4ED8] text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all"
@@ -2203,46 +3000,149 @@ export default function TeacherConsole({
                 </div>
 
                 {syllabusCourseId && (
-                  <div>
-                    <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-1">Modules</label>
-                    <select
-                      value={syllabusModuleId}
-                      onChange={(e) => {
-                        const modId = e.target.value;
-                        setSyllabusModuleId(modId);
-                        if (modId) {
-                          listLessonsAction(modId).then(res => setSyllabusLessons(res.lessons || []));
-                        } else {
-                          listLessonsForCourseAction(syllabusCourseId).then(res => setSyllabusLessons(res.lessons || []));
-                        }
-                        setSyllabusLessonId("");
-                      }}
-                      className="bg-white border border-[#E2E8F0] px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-[#2563EB] w-full"
-                    >
-                      <option value="">-- All Course Modules --</option>
-                      {syllabusModules.map(m => <option key={m.id} value={m.id}>Mod {m.position}: {m.title}</option>)}
-                    </select>
+                  <div className="space-y-3 pt-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block">Modules</label>
+                      <button 
+                        onClick={() => setModuleFormOpen(!moduleFormOpen)}
+                        className="text-[10px] font-bold text-[#2563EB] hover:underline flex items-center gap-1"
+                      >
+                        <Plus size={10} /> Add Module
+                      </button>
+                    </div>
+
+                    {moduleFormOpen && (
+                      <form onSubmit={handleCreateModule} className="p-3 bg-slate-50 border rounded-xl space-y-2 text-xs">
+                        <input 
+                          type="text" 
+                          placeholder="Module Title..." 
+                          value={newModuleTitle}
+                          onChange={e => setNewModuleTitle(e.target.value)}
+                          className="bg-white border px-2 py-1 rounded-lg text-xs w-full"
+                          required
+                        />
+                        <div className="flex gap-2">
+                          <input 
+                            type="number" 
+                            placeholder="Pos" 
+                            value={newModulePosition}
+                            onChange={e => setNewModulePosition(Number(e.target.value))}
+                            className="bg-white border px-2 py-1 rounded-lg text-xs w-20"
+                            required
+                          />
+                          <button type="submit" className="bg-[#2563EB] text-white px-3 py-1 rounded-lg font-bold text-xs flex-1">
+                            Save
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    <div className="flex gap-2 items-center">
+                      <select
+                        value={syllabusModuleId}
+                        onChange={(e) => {
+                          const modId = e.target.value;
+                          setSyllabusModuleId(modId);
+                          if (modId) {
+                            listLessonsAction(modId).then(res => setSyllabusLessons(res.lessons || []));
+                          } else {
+                            listLessonsForCourseAction(syllabusCourseId).then(res => setSyllabusLessons(res.lessons || []));
+                          }
+                          setSyllabusLessonId("");
+                        }}
+                        className="bg-white border border-[#E2E8F0] px-3 py-2 rounded-xl text-xs focus:outline-none focus:border-[#2563EB] flex-1"
+                      >
+                        <option value="">-- All Course Modules --</option>
+                        {syllabusModules.map(m => <option key={m.id} value={m.id}>Mod {m.position}: {m.title}</option>)}
+                      </select>
+                      {syllabusModuleId && (
+                        <button 
+                          onClick={() => handleDeleteModule(syllabusModuleId)}
+                          className="p-2 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 rounded-xl hover:bg-[#DC2626] hover:text-white transition-all"
+                          title="Delete Selected Module"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 {syllabusCourseId && (
-                  <div>
-                    <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block mb-1">Select Lesson</label>
-                    <div className="space-y-1 max-h-60 overflow-y-auto pr-1">
-                      {syllabusLessons.map(l => (
-                        <button
-                          key={l.id}
-                          onClick={() => setSyllabusLessonId(l.id)}
-                          className={`w-full text-left p-2.5 text-xs font-semibold rounded-xl border transition-all flex items-center justify-between ${
-                            syllabusLessonId === l.id 
-                              ? "bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20" 
-                              : "bg-slate-50 border-[#E2E8F0] text-[#475569] hover:bg-slate-100"
-                          }`}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center pt-2">
+                      <label className="text-[10px] font-bold text-[#475569] uppercase tracking-wider block">Lessons</label>
+                      {syllabusModuleId && (
+                        <button 
+                          onClick={() => setLessonFormOpen(!lessonFormOpen)}
+                          className="text-[10px] font-bold text-[#2563EB] hover:underline flex items-center gap-1"
                         >
-                          <span className="truncate pr-2">{l.title}</span>
-                          <ChevronRight size={12} className="shrink-0" />
+                          <Plus size={10} /> Add Lesson
                         </button>
-                      ))}
+                      )}
+                    </div>
+
+                    {lessonFormOpen && (
+                      <form onSubmit={handleCreateLesson} className="p-3 bg-slate-50 border rounded-xl space-y-2 text-xs">
+                        <input 
+                          type="text" 
+                          placeholder="Lesson Title..." 
+                          value={newLessonTitle}
+                          onChange={e => setNewLessonTitle(e.target.value)}
+                          className="bg-white border px-2 py-1 rounded-lg text-xs w-full"
+                          required
+                        />
+                        <div className="flex gap-2">
+                          <input 
+                            type="number" 
+                            placeholder="Pos" 
+                            value={newLessonPosition}
+                            onChange={e => setNewLessonPosition(Number(e.target.value))}
+                            className="bg-white border px-2 py-1 rounded-lg text-xs w-16"
+                            required
+                          />
+                          <input 
+                            type="number" 
+                            placeholder="Dur min" 
+                            value={newLessonDuration}
+                            onChange={e => setNewLessonDuration(Number(e.target.value))}
+                            className="bg-white border px-2 py-1 rounded-lg text-xs w-20"
+                            required
+                          />
+                          <button type="submit" className="bg-[#2563EB] text-white px-3 py-1 rounded-lg font-bold text-xs flex-1">
+                            Save
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                      {syllabusLessons.length === 0 ? (
+                        <p className="text-[11px] text-[#475569] italic text-center py-2">No lessons in this scope.</p>
+                      ) : (
+                        syllabusLessons.map(l => (
+                          <div key={l.id} className="flex gap-2 items-center w-full">
+                            <button
+                              onClick={() => setSyllabusLessonId(l.id)}
+                              className={`text-left p-2.5 text-xs font-semibold rounded-xl border transition-all flex items-center justify-between flex-1 truncate ${
+                                syllabusLessonId === l.id 
+                                  ? "bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20" 
+                                  : "bg-slate-50 border-[#E2E8F0] text-[#475569] hover:bg-slate-100"
+                              }`}
+                            >
+                              <span className="truncate">{l.title}</span>
+                              <ChevronRight size={12} className="shrink-0" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteLesson(l.id)}
+                              className="p-2.5 bg-slate-50 border border-[#E2E8F0] text-[#DC2626] hover:bg-[#DC2626]/10 hover:border-[#DC2626]/30 rounded-xl transition-all"
+                              title="Delete Lesson"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 )}
@@ -2401,6 +3301,15 @@ export default function TeacherConsole({
 
       {/* STUDENT DETAIL SLIDE-OVER DRAWER */}
       {renderStudentDetailDrawer()}
+
+      {/* QUIZ ATTEMPT AUDITOR SLIDE-OVER DRAWER */}
+      {renderQuizAuditorDrawer()}
+
+      {/* PROJECT AUDITOR SLIDE-OVER DRAWER */}
+      {renderProjectAuditorDrawer()}
+
+      {/* CHALLENGE AUDITOR SLIDE-OVER DRAWER */}
+      {renderChallengeAuditorDrawer()}
     </div>
   );
 }

@@ -188,6 +188,17 @@ export async function listTeacherInstitutions(userId: string, isSuperAdmin: bool
     return listInstitutions();
   }
 
+  // 1. Get primary tenant_id
+  const { data: primaryUser, error: userError } = await supabase
+    .schema("core")
+    .from("users")
+    .select("tenant_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  const primaryTenantId = primaryUser?.tenant_id;
+
+  // 2. Get from course_instructors
   const { data: assignments, error: assignError } = await supabase
     .schema("academic")
     .from("course_instructors")
@@ -195,10 +206,22 @@ export async function listTeacherInstitutions(userId: string, isSuperAdmin: bool
     .eq("user_id", userId);
 
   if (assignError) throw assignError;
-  if (!assignments || assignments.length === 0) return [];
 
-  const tenantIds = [...new Set(assignments.map(a => a.tenant_id).filter(Boolean))];
+  // 3. Get from tenant_teachers
+  const { data: tenantMappings, error: mapError } = await supabase
+    .schema("academic")
+    .from("tenant_teachers")
+    .select("tenant_id")
+    .eq("user_id", userId);
 
+  if (mapError) throw mapError;
+
+  const tIds = new Set<string>();
+  if (primaryTenantId) tIds.add(primaryTenantId);
+  assignments?.forEach(a => { if (a.tenant_id) tIds.add(a.tenant_id); });
+  tenantMappings?.forEach(m => { if (m.tenant_id) tIds.add(m.tenant_id); });
+
+  const tenantIds = Array.from(tIds);
   if (tenantIds.length === 0) return [];
 
   const { data: insts, error: instError } = await supabase
@@ -210,6 +233,44 @@ export async function listTeacherInstitutions(userId: string, isSuperAdmin: bool
 
   if (instError) throw instError;
   return insts || [];
+}
+
+export async function listAllTeachers() {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .rpc("get_all_teachers");
+
+  if (error) throw error;
+
+  return (data || []).map((t: any) => ({
+    id: t.id,
+    full_name: t.full_name,
+    email: t.email,
+    tenant_id: t.tenant_id,
+    mapped_tenant_ids: t.mapped_tenant_ids || []
+  }));
+}
+
+export async function mapTeacherToTenant(userId: string, tenantId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .schema("academic")
+    .from("tenant_teachers")
+    .insert({ user_id: userId, tenant_id: tenantId });
+  if (error) throw error;
+  return true;
+}
+
+export async function unmapTeacherFromTenant(userId: string, tenantId: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .schema("academic")
+    .from("tenant_teachers")
+    .delete()
+    .eq("user_id", userId)
+    .eq("tenant_id", tenantId);
+  if (error) throw error;
+  return true;
 }
 
 
