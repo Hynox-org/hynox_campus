@@ -81,7 +81,8 @@ import {
   UserCheck,
   Award,
   Menu,
-  X
+  X,
+  Play
 } from "lucide-react";
 import LibraryBuilder from "./library-builder";
 import ProgramManager from "./program-manager";
@@ -374,7 +375,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [lessonForm, setLessonForm] = useState({
     title: "",
     lesson_type_id: "",
-    content_json_str: "{}",
+    content_text: "",
     video_url: "",
     duration: 0,
     position: 1,
@@ -744,14 +745,10 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
     setError("");
     setSuccess("");
 
-    let content_json = {};
-    try {
-      content_json = JSON.parse(lessonForm.content_json_str);
-    } catch (err) {
-      setError("Content JSON must be valid JSON.");
-      setLoading(false);
-      return;
-    }
+    const content_json = {
+      body: lessonForm.content_text,
+      text: lessonForm.content_text
+    };
 
     let res;
     if (editingLesson) {
@@ -3178,7 +3175,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                           setLessonForm({
                                             title: "",
                                             lesson_type_id: defaultType,
-                                            content_json_str: "{}",
+                                            content_text: "",
                                             video_url: "",
                                             duration: 15,
                                             position: (mod.lessons?.length || 0) + 1,
@@ -3270,7 +3267,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                                   setLessonForm({
                                                     title: les.title,
                                                     lesson_type_id: les.lesson_type_id,
-                                                    content_json_str: JSON.stringify(les.content_json || {}),
+                                                    content_text: les.content_json?.body || les.content_json?.text || "",
                                                     video_url: les.video_url || "",
                                                     duration: les.duration || 0,
                                                     position: les.position || 1,
@@ -3300,6 +3297,16 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                               </button>
                                             </div>
                                           </div>
+
+                                          {les.video_url && (
+                                            <div className="flex items-center gap-1.5 text-[10px] bg-slate-50 px-2.5 py-1.5 rounded-lg border border-[#d2d2d7] mb-2">
+                                              <Play size={10} className="fill-[#0066cc] text-[#0066cc] shrink-0" />
+                                              <span className="font-semibold text-[#86868b]">Video Link:</span>
+                                              <a href={les.video_url} target="_blank" rel="noopener noreferrer" className="truncate hover:underline text-[#0066cc] font-bold flex-1">
+                                                {les.video_url}
+                                              </a>
+                                            </div>
+                                          )}
 
                                           {/* Lesson Resource list */}
                                           {les.resources && les.resources.length > 0 && (
@@ -3732,12 +3739,14 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         />
                       </div>
                       <div>
-                        <label className="block font-semibold mb-1 text-[#86868b]">Structured Content (JSON)</label>
+                        <label className="block font-semibold mb-1 text-[#86868b]">Learning Content (Markdown / Text) *</label>
                         <textarea
-                          value={lessonForm.content_json_str}
-                          onChange={(e) => setLessonForm({ ...lessonForm, content_json_str: e.target.value })}
-                          rows={4}
-                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f] resize-none"
+                          placeholder="Enter lesson markdown or text content here..."
+                          value={lessonForm.content_text}
+                          onChange={(e) => setLessonForm({ ...lessonForm, content_text: e.target.value })}
+                          rows={6}
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f] resize-y"
+                          required
                         />
                       </div>
                       <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#d2d2d7]">

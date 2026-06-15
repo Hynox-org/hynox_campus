@@ -24,7 +24,7 @@ import { listCourseTemplatesAction, instantiateCourseTemplateAction } from "@/ap
 import { 
   Folder, Plus, Trash2, X, ChevronRight, ChevronDown, 
   BookOpen, PlusCircle, CheckCircle2, AlertCircle, 
-  FileText, Calendar, Clock, Sparkles, Edit
+  FileText, Calendar, Clock, Sparkles, Edit, Play, Video, ExternalLink
 } from "lucide-react";
 
 interface ProgramManagerProps {
@@ -45,27 +45,22 @@ export default function ProgramManager({
   setSelectedProgram
 }: ProgramManagerProps) {
   const [programs, setPrograms] = useState<any[]>([]);
-
-  // Lazy Loaded Cache States (solves HTTP RPC query waterfall bottlenecks)
+  const [blueprints, setBlueprints] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
+  const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
+  const [selectedBlueprintId, setSelectedBlueprintId] = useState("");
+
+  // Cached data map to prevent refetches
   const [modulesCache, setModulesCache] = useState<Record<string, any[]>>({});
   const [lessonsCache, setLessonsCache] = useState<Record<string, any[]>>({});
   const [resourcesCache, setResourcesCache] = useState<Record<string, any[]>>({});
 
-  // Loading indicator maps for individual nodes
+  // Loading states
+  const [loading, setLoading] = useState(false);
   const [modulesLoading, setModulesLoading] = useState<Record<string, boolean>>({});
   const [lessonsLoading, setLessonsLoading] = useState<Record<string, boolean>>({});
-
-  // Node toggle states
-  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
-  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
-  const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
-
-  // Blueprints
-  const [blueprints, setBlueprints] = useState<any[]>([]);
-  const [selectedBlueprintId, setSelectedBlueprintId] = useState("");
-
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -92,7 +87,15 @@ export default function ProgramManager({
   const [lessonModalOpen, setLessonModalOpen] = useState(false);
   const [editingLesson, setEditingLesson] = useState<any | null>(null);
   const [targetModuleId, setTargetModuleId] = useState<string | null>(null);
-  const [lessonForm, setLessonForm] = useState({ title: "", duration: 30, position: 1 });
+  const [lessonForm, setLessonForm] = useState({
+    title: "",
+    duration: 30,
+    position: 1,
+    lesson_type_id: "",
+    video_url: "",
+    content_text: "",
+    is_preview: false
+  });
 
   // Modals / forms for Resources
   const [resourceModalOpen, setResourceModalOpen] = useState(false);
@@ -367,19 +370,26 @@ export default function ProgramManager({
     if (editingLesson) {
       res = await updateLessonAction(editingLesson.id, {
         title: lessonForm.title,
+        lesson_type_id: lessonForm.lesson_type_id || defaultLessonTypeId,
         duration: Number(lessonForm.duration),
-        position: Number(lessonForm.position)
+        position: Number(lessonForm.position),
+        video_url: lessonForm.video_url || undefined,
+        content_json: lessonForm.content_text ? { text: lessonForm.content_text, body: lessonForm.content_text } : {},
+        is_preview: lessonForm.is_preview
       });
     } else {
       res = await createLessonAction({
         module_id: targetModuleId,
         title: lessonForm.title,
-        lesson_type_id: defaultLessonTypeId,
+        lesson_type_id: lessonForm.lesson_type_id || defaultLessonTypeId,
         duration: Number(lessonForm.duration),
         position: Number(lessonForm.position),
         status_id: defaultStatusId,
         tenant_id: selectedInstId,
-        institution_id: selectedInstId
+        institution_id: selectedInstId,
+        video_url: lessonForm.video_url || undefined,
+        content_json: lessonForm.content_text ? { text: lessonForm.content_text, body: lessonForm.content_text } : {},
+        is_preview: lessonForm.is_preview
       });
     }
 
@@ -709,7 +719,15 @@ export default function ProgramManager({
                                       onClick={() => {
                                         setTargetModuleId(mod.id);
                                         setEditingLesson(null);
-                                        setLessonForm({ title: "", duration: 30, position: (lessonsCache[mod.id]?.length || 0) + 1 });
+                                        setLessonForm({ 
+                                          title: "", 
+                                          duration: 30, 
+                                          position: (lessonsCache[mod.id]?.length || 0) + 1,
+                                          lesson_type_id: defaultLessonTypeId,
+                                          video_url: "",
+                                          content_text: "",
+                                          is_preview: false
+                                        });
                                         setLessonModalOpen(true);
                                       }}
                                       className="flex items-center gap-1 text-[#0066cc] hover:underline text-[10px] font-bold cursor-pointer"
@@ -743,7 +761,15 @@ export default function ProgramManager({
                                                 onClick={() => {
                                                   setTargetModuleId(mod.id);
                                                   setEditingLesson(les);
-                                                  setLessonForm({ title: les.title, duration: les.duration || 30, position: les.position || 1 });
+                                                  setLessonForm({ 
+                                                    title: les.title, 
+                                                    duration: les.duration || 30, 
+                                                    position: les.position || 1,
+                                                    lesson_type_id: les.lesson_type_id || defaultLessonTypeId,
+                                                    video_url: les.video_url || "",
+                                                    content_text: les.content_json?.text || les.content_json?.body || "",
+                                                    is_preview: !!les.is_preview
+                                                  });
                                                   setLessonModalOpen(true);
                                                 }}
                                                 className="text-[#86868b] hover:text-[#1d1d1f] p-0.5 hover:bg-slate-100 rounded"
@@ -769,15 +795,33 @@ export default function ProgramManager({
 
                                           {/* Lesson resources list (lazy loaded) */}
                                           {isLesExpanded && (
-                                            <div className="border-t border-slate-100 pt-2 mt-2 space-y-1 pl-4">
-                                              <div className="flex justify-end mb-1.5">
+                                            <div className="border-t border-slate-100 pt-2 mt-2 space-y-2 pl-4">
+                                              {les.video_url && (
+                                                <div className="flex items-center gap-1.5 text-[10px] bg-slate-50 px-2 py-1.5 rounded-lg border border-slate-200">
+                                                  <Play size={10} className="fill-[#0066cc] text-[#0066cc] shrink-0" />
+                                                  <span className="font-semibold text-slate-700 font-sans">Video Link:</span>
+                                                  <a href={les.video_url} target="_blank" rel="noopener noreferrer" className="truncate hover:underline text-[#0066cc] font-bold flex-1 font-mono">
+                                                    {les.video_url}
+                                                  </a>
+                                                </div>
+                                              )}
+
+                                              {(les.content_json?.text || les.content_json?.body) && (
+                                                <div className="text-[10px] bg-slate-50 px-2 py-1.5 rounded-lg border border-slate-200 text-[#475569] leading-relaxed whitespace-pre-wrap font-sans">
+                                                  <p className="font-semibold text-slate-700 mb-0.5">Content Description:</p>
+                                                  {les.content_json?.text || les.content_json?.body}
+                                                </div>
+                                              )}
+
+                                              <div className="flex items-center justify-between border-b border-slate-100 pb-1 mb-1">
+                                                <span className="text-[9px] uppercase font-bold text-[#86868b] font-sans">Attached Resources</span>
                                                 <button
                                                   onClick={() => {
                                                     setTargetLessonId(les.id);
                                                     setResourceForm({ title: "", resource_type: "link", external_url: "", file_url: "" });
                                                     setResourceModalOpen(true);
                                                   }}
-                                                  className="flex items-center gap-1 text-[#0066cc] hover:underline text-[9px] font-bold cursor-pointer"
+                                                  className="flex items-center gap-1 text-[#0066cc] hover:underline text-[9px] font-bold cursor-pointer font-sans"
                                                 >
                                                   <Plus size={10} /> Add Resource
                                                 </button>
@@ -788,8 +832,19 @@ export default function ProgramManager({
                                                     <div key={res.id} className="flex items-center justify-between text-[10px] text-[#86868b] py-1 bg-slate-50 px-2 rounded">
                                                       <div className="flex items-center gap-1.5 min-w-0">
                                                         <FileText size={10} className="shrink-0" />
-                                                        <span className="truncate">{res.title}</span>
-                                                        <span className="text-[8px] bg-slate-200 text-[#86868b] px-1 rounded uppercase font-bold shrink-0">{res.resource_type}</span>
+                                                        {res.external_url || res.file_url ? (
+                                                          <a
+                                                            href={res.external_url || res.file_url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="truncate hover:underline text-[#0066cc] font-semibold font-sans"
+                                                          >
+                                                            {res.title}
+                                                          </a>
+                                                        ) : (
+                                                          <span className="truncate font-medium font-sans">{res.title}</span>
+                                                        )}
+                                                        <span className="text-[8px] bg-slate-200 text-[#86868b] px-1 rounded uppercase font-bold shrink-0 font-mono">{res.resource_type}</span>
                                                       </div>
                                                       <button
                                                         onClick={async () => {
@@ -807,10 +862,10 @@ export default function ProgramManager({
                                                     </div>
                                                   ))
                                                 ) : (
-                                                  <p className="text-[9px] text-[#86868b] italic">No resources attached to this lesson.</p>
+                                                  <p className="text-[9px] text-[#86868b] italic font-sans">No resources attached to this lesson.</p>
                                                 )
                                               ) : (
-                                                <p className="text-[9px] text-[#86868b] italic">Loading resource attachments...</p>
+                                                <p className="text-[9px] text-[#86868b] italic font-sans">Loading resource attachments...</p>
                                               )}
                                             </div>
                                           )}
@@ -1088,6 +1143,19 @@ export default function ProgramManager({
                 />
               </div>
 
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Lesson Type *</label>
+                <select
+                  value={lessonForm.lesson_type_id || defaultLessonTypeId}
+                  onChange={(e) => setLessonForm({ ...lessonForm, lesson_type_id: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-2.5 py-1.5 text-xs text-[#1d1d1f] focus:outline-none focus:border-[#0066cc] shadow-sm"
+                >
+                  {lessonTypes.map((t: any) => (
+                    <option key={t.id} value={t.id}>{t.description || t.code}</option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block font-semibold mb-1 text-[#86868b]">Duration (Minutes) *</label>
@@ -1109,6 +1177,41 @@ export default function ProgramManager({
                     required
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Video URL (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="https://example.com/video.mp4"
+                  value={lessonForm.video_url}
+                  onChange={(e) => setLessonForm({ ...lessonForm, video_url: e.target.value })}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-[#86868b]">Structured Content / Text (Optional)</label>
+                <textarea
+                  placeholder="Type lesson text content..."
+                  value={lessonForm.content_text}
+                  onChange={(e) => setLessonForm({ ...lessonForm, content_text: e.target.value })}
+                  rows={4}
+                  className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm text-[#1d1d1f] resize-y"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="lesson-is-preview"
+                  checked={lessonForm.is_preview}
+                  onChange={(e) => setLessonForm({ ...lessonForm, is_preview: e.target.checked })}
+                  className="rounded border-[#d2d2d7] text-[#0066cc] focus:ring-[#0066cc]"
+                />
+                <label htmlFor="lesson-is-preview" className="font-semibold text-[#86868b] select-none cursor-pointer">
+                  Available as free preview
+                </label>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#d2d2d7]">

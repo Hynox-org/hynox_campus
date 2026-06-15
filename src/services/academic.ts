@@ -666,7 +666,12 @@ export async function listLessonResources(lessonId: string) {
     .order("position", { ascending: true });
 
   if (error) throw error;
-  return data || [];
+  return (data || []).map((res: any) => ({
+    ...res,
+    resource_type: res.resource_type_code,
+    file_url: res.resource_type_code === "file" ? res.resource_url : undefined,
+    external_url: res.resource_type_code !== "file" ? res.resource_url : undefined
+  }));
 }
 
 export async function createLessonResource(input: LessonResourceInput) {
@@ -688,10 +693,9 @@ export async function createLessonResource(input: LessonResourceInput) {
       lesson_id: input.lesson_id,
       tenant_id: tenantId,
       institution_id: institutionId,
-      resource_type: input.resource_type,
+      resource_type_code: input.resource_type,
+      resource_url: input.file_url || input.external_url || "",
       title: input.title,
-      file_url: input.file_url,
-      external_url: input.external_url,
       position: input.position || 1,
       created_by: session.userId
     })
@@ -699,7 +703,12 @@ export async function createLessonResource(input: LessonResourceInput) {
     .single();
 
   if (error) throw error;
-  return data;
+  return {
+    ...data,
+    resource_type: data.resource_type_code,
+    file_url: data.resource_type_code === "file" ? data.resource_url : undefined,
+    external_url: data.resource_type_code !== "file" ? data.resource_url : undefined
+  };
 }
 
 export async function deleteLessonResource(id: string) {

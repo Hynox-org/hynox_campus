@@ -286,6 +286,45 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
       return;
     }
 
+    const selectedCohort = cohorts.find(c => c.id === assignForm.cohort_id);
+    if (selectedCohort) {
+      const cohortStart = selectedCohort.start_date ? new Date(selectedCohort.start_date) : null;
+      const cohortEnd = selectedCohort.end_date ? new Date(selectedCohort.end_date) : null;
+
+      if (assignForm.start_date) {
+        const assignStart = new Date(assignForm.start_date);
+        if (cohortStart && assignStart < cohortStart) {
+          setError(`Course assignment start date cannot be before cohort start date (${selectedCohort.start_date.split('T')[0]}).`);
+          return;
+        }
+        if (cohortEnd && assignStart > cohortEnd) {
+          setError(`Course assignment start date cannot be after cohort end date (${selectedCohort.end_date.split('T')[0]}).`);
+          return;
+        }
+      }
+
+      if (assignForm.due_date) {
+        const assignDue = new Date(assignForm.due_date);
+        if (cohortStart && assignDue < cohortStart) {
+          setError(`Course assignment due/end date cannot be before cohort start date (${selectedCohort.start_date.split('T')[0]}).`);
+          return;
+        }
+        if (cohortEnd && assignDue > cohortEnd) {
+          setError(`Course assignment due/end date cannot be after cohort end date (${selectedCohort.end_date.split('T')[0]}).`);
+          return;
+        }
+      }
+
+      if (assignForm.start_date && assignForm.due_date) {
+        const assignStart = new Date(assignForm.start_date);
+        const assignDue = new Date(assignForm.due_date);
+        if (assignStart > assignDue) {
+          setError("Course assignment start date cannot be after due date.");
+          return;
+        }
+      }
+    }
+
     const res = await assignCourseAction({
       cohort_id: assignForm.cohort_id,
       course_id: assignForm.course_id,
@@ -959,93 +998,140 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
 
             {/* Form & Content */}
             <form onSubmit={handleAssignSubmit} className="flex-1 flex flex-col min-h-0">
-              <div className="p-6 space-y-5 flex-1 overflow-y-auto">
-                <div className="space-y-1">
-                  <label className="block font-bold text-[#86868b]">Select Cohort *</label>
-                  <select
-                    value={assignForm.cohort_id}
-                    onChange={(e) => setAssignForm({ ...assignForm, cohort_id: e.target.value })}
-                    className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-medium"
-                    required
-                  >
-                    <option value="">-- Choose Cohort Batch --</option>
-                    {cohorts.map(coh => (
-                      <option key={coh.id} value={coh.id}>{coh.name} ({coh.code})</option>
-                    ))}
-                  </select>
-                </div>
+              {(() => {
+                const selectedCohortForAssign = cohorts.find(c => c.id === assignForm.cohort_id);
+                const cohortLimits = (() => {
+                  if (!selectedCohortForAssign) return { min: "", max: "" };
+                  
+                  const formatDate = (dStr: string) => {
+                    if (!dStr) return "";
+                    return dStr.split("T")[0];
+                  };
 
-                <div className="space-y-1">
-                  <label className="block font-bold text-[#86868b]">Select Academic Course *</label>
-                  <select
-                    value={assignForm.course_id}
-                    onChange={(e) => setAssignForm({ ...assignForm, course_id: e.target.value })}
-                    className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-medium"
-                    required
-                  >
-                    <option value="">-- Choose Course --</option>
-                    {allCourses.map(course => {
-                      const isAlreadyAssigned = assignments.some(
-                        ass => ass.cohort_id === assignForm.cohort_id && ass.course_id === course.id
-                      );
-                      return (
-                        <option key={course.id} value={course.id} disabled={isAlreadyAssigned}>
-                          {course.title} {isAlreadyAssigned ? "(Already Assigned)" : ""}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </div>
+                  const cohortStart = formatDate(selectedCohortForAssign.start_date);
+                  const cohortEnd = formatDate(selectedCohortForAssign.end_date);
+                  const todayStr = new Date().toISOString().split("T")[0];
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="block font-bold text-[#86868b]">Start Date</label>
-                    <input
-                      type="date"
-                      value={assignForm.start_date}
-                      onChange={(e) => setAssignForm({ ...assignForm, start_date: e.target.value })}
-                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="block font-bold text-[#86868b]">Due Date</label>
-                    <input
-                      type="date"
-                      value={assignForm.due_date}
-                      onChange={(e) => setAssignForm({ ...assignForm, due_date: e.target.value })}
-                      className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
-                    />
-                  </div>
-                </div>
+                  let min = cohortStart;
+                  // If cohort starts in the past (or is running now), set min to today
+                  if (cohortStart && cohortStart < todayStr) {
+                    min = todayStr;
+                  } else if (!cohortStart) {
+                    min = todayStr;
+                  }
 
-                <div className="flex items-center gap-2 pt-2">
-                  <input
-                    type="checkbox"
-                    id="isRequired"
-                    checked={assignForm.is_required}
-                    onChange={(e) => setAssignForm({ ...assignForm, is_required: e.target.checked })}
-                    className="rounded border-[#d2d2d7] text-[#0066cc] focus:ring-[#0066cc]"
-                  />
-                  <label htmlFor="isRequired" className="font-semibold text-[#86868b] select-none cursor-pointer">Mandatory / Required Course</label>
-                </div>
-              </div>
+                  let max = cohortEnd;
+                  return { min, max };
+                })();
 
-              {/* Actions Footer */}
-              <div className="bg-slate-50 border-t border-[#d2d2d7] p-5 flex justify-end gap-3 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setAssignModalOpen(false)}
-                  className="border border-[#d2d2d7] hover:bg-slate-100 px-4 py-2 rounded-lg font-semibold transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="bg-[#0066cc] text-white px-5 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-colors"
-                >
-                  Assign Course
-                </button>
-              </div>
+                return (
+                  <>
+                    <div className="p-6 space-y-5 flex-1 overflow-y-auto">
+                      <div className="space-y-1">
+                        <label className="block font-bold text-[#86868b]">Select Cohort *</label>
+                        <select
+                          value={assignForm.cohort_id}
+                          onChange={(e) => setAssignForm({ ...assignForm, cohort_id: e.target.value, start_date: "", due_date: "" })}
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-medium"
+                          required
+                        >
+                          <option value="">-- Choose Cohort Batch --</option>
+                          {cohorts.map(coh => (
+                            <option key={coh.id} value={coh.id}>{coh.name} ({coh.code})</option>
+                          ))}
+                        </select>
+                        {selectedCohortForAssign && (
+                          <p className="text-[10px] text-[#86868b] font-medium mt-1">
+                            Cohort functioning dates:{" "}
+                            <span className="text-[#0066cc] font-semibold">
+                              {selectedCohortForAssign.start_date ? selectedCohortForAssign.start_date.split("T")[0] : "No Start"}
+                            </span>{" "}
+                            to{" "}
+                            <span className="text-[#0066cc] font-semibold">
+                              {selectedCohortForAssign.end_date ? selectedCohortForAssign.end_date.split("T")[0] : "No End"}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block font-bold text-[#86868b]">Select Academic Course *</label>
+                        <select
+                          value={assignForm.course_id}
+                          onChange={(e) => setAssignForm({ ...assignForm, course_id: e.target.value })}
+                          className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-medium"
+                          required
+                        >
+                          <option value="">-- Choose Course --</option>
+                          {allCourses.map(course => {
+                            const isAlreadyAssigned = assignments.some(
+                              ass => ass.cohort_id === assignForm.cohort_id && ass.course_id === course.id
+                            );
+                            return (
+                              <option key={course.id} value={course.id} disabled={isAlreadyAssigned}>
+                                {course.title} {isAlreadyAssigned ? "(Already Assigned)" : ""}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="block font-bold text-[#86868b]">Start Date</label>
+                          <input
+                            type="date"
+                            value={assignForm.start_date}
+                            min={cohortLimits.min}
+                            max={cohortLimits.max || undefined}
+                            onChange={(e) => setAssignForm({ ...assignForm, start_date: e.target.value })}
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm animate-fadeIn"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="block font-bold text-[#86868b]">Due Date</label>
+                          <input
+                            type="date"
+                            value={assignForm.due_date}
+                            min={assignForm.start_date || cohortLimits.min}
+                            max={cohortLimits.max || undefined}
+                            onChange={(e) => setAssignForm({ ...assignForm, due_date: e.target.value })}
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm animate-fadeIn"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2">
+                        <input
+                          type="checkbox"
+                          id="isRequired"
+                          checked={assignForm.is_required}
+                          onChange={(e) => setAssignForm({ ...assignForm, is_required: e.target.checked })}
+                          className="rounded border-[#d2d2d7] text-[#0066cc] focus:ring-[#0066cc]"
+                        />
+                        <label htmlFor="isRequired" className="font-semibold text-[#86868b] select-none cursor-pointer">Mandatory / Required Course</label>
+                      </div>
+                    </div>
+
+                    {/* Actions Footer */}
+                    <div className="bg-slate-50 border-t border-[#d2d2d7] p-5 flex justify-end gap-3 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setAssignModalOpen(false)}
+                        className="border border-[#d2d2d7] hover:bg-slate-100 px-4 py-2 rounded-lg font-semibold transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="bg-[#0066cc] text-white px-5 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-colors"
+                      >
+                        Assign Course
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </form>
           </div>
         </>

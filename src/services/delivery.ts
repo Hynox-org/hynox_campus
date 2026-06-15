@@ -307,6 +307,49 @@ export async function assignCourse(input: CourseAssignmentInput) {
   const session = await getSessionTenant();
   if (!session) throw new Error("No active session found.");
 
+  // Fetch cohort dates
+  const { data: cohort, error: cohortError } = await supabase
+    .schema("delivery")
+    .from("cohorts")
+    .select("start_date, end_date, name")
+    .eq("id", input.cohort_id)
+    .maybeSingle();
+
+  if (cohortError || !cohort) {
+    throw new Error(`Cohort not found: ${cohortError?.message || "Match not found for cohort ID."}`);
+  }
+
+  const cohortStart = cohort.start_date ? new Date(cohort.start_date) : null;
+  const cohortEnd = cohort.end_date ? new Date(cohort.end_date) : null;
+
+  if (input.start_date) {
+    const assignStart = new Date(input.start_date);
+    if (cohortStart && assignStart < cohortStart) {
+      throw new Error(`Course assignment start date cannot be before cohort start date (${cohort.start_date.split('T')[0]}).`);
+    }
+    if (cohortEnd && assignStart > cohortEnd) {
+      throw new Error(`Course assignment start date cannot be after cohort end date (${cohort.end_date.split('T')[0]}).`);
+    }
+  }
+
+  if (input.due_date) {
+    const assignDue = new Date(input.due_date);
+    if (cohortStart && assignDue < cohortStart) {
+      throw new Error(`Course assignment due date cannot be before cohort start date (${cohort.start_date.split('T')[0]}).`);
+    }
+    if (cohortEnd && assignDue > cohortEnd) {
+      throw new Error(`Course assignment due date cannot be after cohort end date (${cohort.end_date.split('T')[0]}).`);
+    }
+  }
+
+  if (input.start_date && input.due_date) {
+    const assignStart = new Date(input.start_date);
+    const assignDue = new Date(input.due_date);
+    if (assignStart > assignDue) {
+      throw new Error("Course assignment start date cannot be after due date.");
+    }
+  }
+
   const { data, error } = await supabase
     .schema("delivery")
     .from("course_assignments")

@@ -439,7 +439,8 @@ export async function listQuizAttemptsAction(tenantId: string) {
           ...att,
           quiz_title: quiz?.activities?.title || "Unknown Quiz",
           max_score: Number(quiz?.activities?.max_score || 100),
-          student
+          student,
+          activity_id: quiz?.activity_id
         };
       })
     };

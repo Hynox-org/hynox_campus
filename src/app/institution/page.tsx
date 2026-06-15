@@ -1,12 +1,13 @@
 import { getCurrentUser } from "@/services/auth";
 import { listOnboardingInvitations } from "@/services/onboarding";
-import { listPrograms, getAcademicLookups, listTenantInstructors } from "@/services/academic";
+import { listPrograms, getAcademicLookups, listTenantInstructors, listTenantCourses } from "@/services/academic";
 import { signOutAction } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
 import { Terminal, LogOut } from "lucide-react";
 import InstitutionPanel from "./institution-panel";
 import { listCohorts, listEnrollments } from "@/services/delivery";
-import { listProjectSubmissions, listChallengeSubmissions } from "@/services/learning";
+import { listProjectSubmissions, listChallengeSubmissions, listAllActivities } from "@/services/learning";
+import { listQuizAttemptsAction } from "@/app/actions/learning-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,9 @@ export default async function InstitutionAdminPage() {
   let instructors: any[] = [];
   let projectSubmissions: any[] = [];
   let challengeSubmissions: any[] = [];
+  let activities: any[] = [];
+  let coursesList: any[] = [];
+  let quizAttempts: any[] = [];
   let lookups: any = {
     courseTypes: [],
     lessonTypes: [],
@@ -47,7 +51,10 @@ export default async function InstitutionAdminPage() {
       instructorsRes,
       projectSubmissionsRes,
       challengeSubmissionsRes,
-      lookupsRes
+      lookupsRes,
+      activitiesRes,
+      coursesRes,
+      quizAttsRes
     ] = await Promise.all([
       listOnboardingInvitations(),
       listCohorts(tenantId),
@@ -56,7 +63,10 @@ export default async function InstitutionAdminPage() {
       listTenantInstructors(tenantId),
       listProjectSubmissions(tenantId),
       listChallengeSubmissions(tenantId),
-      getAcademicLookups()
+      getAcademicLookups(),
+      listAllActivities(tenantId),
+      listTenantCourses(tenantId),
+      listQuizAttemptsAction(tenantId)
     ]);
 
     invitations = (allInvitations || []).filter((inv: any) => inv.tenant_id === tenantId);
@@ -66,6 +76,9 @@ export default async function InstitutionAdminPage() {
     instructors = instructorsRes || [];
     projectSubmissions = projectSubmissionsRes || [];
     challengeSubmissions = challengeSubmissionsRes || [];
+    activities = activitiesRes || [];
+    coursesList = coursesRes || [];
+    quizAttempts = quizAttsRes?.attempts || [];
     lookups = lookupsRes || lookups;
   } catch (error) {
     console.error("Failed to load institution admin page datasets:", error);
@@ -117,6 +130,9 @@ export default async function InstitutionAdminPage() {
           initialEnrollments={enrollments}
           initialProjectSubmissions={projectSubmissions}
           initialChallengeSubmissions={challengeSubmissions}
+          initialActivities={activities}
+          initialCoursesList={coursesList}
+          initialQuizAttempts={quizAttempts}
           lookups={lookups}
         />
       </main>

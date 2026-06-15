@@ -1,26 +1,13 @@
 "use client";
 
 import React, { useState } from "react";
-import { 
-  signInWithGoogle, 
-  signInWithPasswordAction, 
-  signUpPublicUserAction 
-} from "@/app/actions/auth-actions";
-import { Terminal, ShieldCheck, Mail, Lock, User, AlertCircle, ArrowRight } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { signInWithGoogle } from "@/app/actions/auth-actions";
+import { Terminal, ShieldCheck, AlertCircle } from "lucide-react";
 
 export default function LoginPage() {
-  const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"login" | "signup" | "invite">("login");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
-
-  // Form states
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [inviteToken, setInviteToken] = useState("");
 
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -39,65 +26,20 @@ export default function LoginPage() {
     setLoading(true);
     setErrorMessage("");
     try {
-      await signInWithGoogle("/");
+      const res = await signInWithGoogle("/");
+      if (res?.error) {
+        setErrorMessage(res.error);
+        setLoading(false);
+      } else if (res?.url) {
+        window.location.href = res.url;
+      } else {
+        setErrorMessage("Failed to get Google Sign-In redirect URL.");
+        setLoading(false);
+      }
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to initialize Google Sign-In.");
       setLoading(false);
     }
-  };
-
-  const handlePasswordSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    const formData = new FormData();
-    formData.append("email", email);
-    formData.append("password", password);
-
-    const res = await signInWithPasswordAction(formData);
-    if (res?.error) {
-      setErrorMessage(res.error);
-      setLoading(false);
-    } else {
-      // Success: browser reload or direct router check resolves session and redirects
-      router.refresh();
-      router.push("/");
-    }
-  };
-
-  const handlePasswordSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMessage("");
-    setSuccessMessage("");
-
-    const formData = new FormData();
-    formData.append("email", email);
-    formData.append("password", password);
-    formData.append("fullName", fullName);
-
-    const res = await signUpPublicUserAction(formData);
-    if (res?.error) {
-      setErrorMessage(res.error);
-      setLoading(false);
-    } else {
-      setSuccessMessage("Public registration successful! Please sign in using your credentials.");
-      setActiveTab("login");
-      setLoading(false);
-      setPassword("");
-    }
-  };
-
-  const handleClaimInvite = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !inviteToken) {
-      setErrorMessage("Please fill in both fields.");
-      return;
-    }
-    // Route directly to the verify page with parameters
-    router.push(`/onboarding/verify?token=${inviteToken}&email=${encodeURIComponent(email)}`);
   };
 
   // Google G Logo SVG
@@ -135,52 +77,6 @@ export default function LoginPage() {
           <p className="text-xs text-[#475569] mt-1">Platform Authentication Portal</p>
         </div>
 
-        {/* Tab Headers */}
-        <div className="grid grid-cols-3 gap-1 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg p-1 mb-6">
-          <button
-            onClick={() => {
-              setActiveTab("login");
-              setErrorMessage("");
-              setSuccessMessage("");
-            }}
-            className={`text-xs font-semibold py-1.5 rounded-md transition-all ${
-              activeTab === "login"
-                ? "bg-white text-[#2563EB] shadow-sm border border-[#E2E8F0]"
-                : "text-[#475569] hover:text-[#0F172A]"
-            }`}
-          >
-            Sign In
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab("signup");
-              setErrorMessage("");
-              setSuccessMessage("");
-            }}
-            className={`text-xs font-semibold py-1.5 rounded-md transition-all ${
-              activeTab === "signup"
-                ? "bg-white text-[#2563EB] shadow-sm border border-[#E2E8F0]"
-                : "text-[#475569] hover:text-[#0F172A]"
-            }`}
-          >
-            Sign Up
-          </button>
-          <button
-            onClick={() => {
-              setActiveTab("invite");
-              setErrorMessage("");
-              setSuccessMessage("");
-            }}
-            className={`text-xs font-semibold py-1.5 rounded-md transition-all ${
-              activeTab === "invite"
-                ? "bg-white text-[#2563EB] shadow-sm border border-[#E2E8F0]"
-                : "text-[#475569] hover:text-[#0F172A]"
-            }`}
-          >
-            Claim Token
-          </button>
-        </div>
-
         {/* Alert Messages */}
         {errorMessage && (
           <div className="mb-4 bg-[#DC2626]/5 border border-[#DC2626]/20 text-[#DC2626] rounded-lg p-3 text-xs flex items-start gap-2">
@@ -196,164 +92,21 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Tabs Content */}
-        {activeTab === "login" && (
-          <div className="space-y-4">
-            {/* Google OAuth Login Button at Top */}
-            <button
-              onClick={handleGoogleSignIn}
-              disabled={loading}
-              className="w-full bg-[#0F172A] hover:bg-[#0F172A]/90 border border-[#E2E8F0] text-white text-xs font-semibold py-3 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 duration-200"
-            >
-              <GoogleIcon />
-              Continue with Google
-            </button>
-
-            <div className="relative my-4">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-[#E2E8F0]" />
-              </div>
-              <div className="relative flex justify-center text-[10px]">
-                <span className="bg-white px-2.5 text-[#475569] font-semibold uppercase tracking-wider">Or credentials</span>
-              </div>
-            </div>
-
-            <form onSubmit={handlePasswordSignIn} className="space-y-4">
-              <div className="relative">
-                <Mail className="absolute left-3 top-3 text-[#475569]" size={15} />
-                <input
-                  type="email"
-                  placeholder="Institutional Email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-10 pr-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#2563EB] shadow-sm"
-                />
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 text-[#475569]" size={15} />
-                <input
-                  type="password"
-                  placeholder="Password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-10 pr-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#2563EB] shadow-sm"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-[#2563EB] text-white text-xs font-semibold py-2.5 rounded-lg shadow-sm hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
-              >
-                {loading ? "Signing in..." : "Sign In with Credentials"}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {activeTab === "signup" && (
-          <div className="space-y-4">
-            {/* Google OAuth Login Button at Top */}
-            <button
-              onClick={handleGoogleSignIn}
-              disabled={loading}
-              className="w-full bg-[#0F172A] hover:bg-[#0F172A]/90 border border-[#E2E8F0] text-white text-xs font-semibold py-3 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 duration-200"
-            >
-              <GoogleIcon />
-              Continue with Google
-            </button>
-
-            <div className="relative my-4">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-[#E2E8F0]" />
-              </div>
-              <div className="relative flex justify-center text-[10px]">
-                <span className="bg-white px-2.5 text-[#475569] font-semibold uppercase tracking-wider">Or credentials</span>
-              </div>
-            </div>
-
-            <form onSubmit={handlePasswordSignUp} className="space-y-4">
-              <div className="relative">
-                <User className="absolute left-3 top-3 text-[#475569]" size={15} />
-                <input
-                  type="text"
-                  placeholder="Full Name"
-                  required
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-10 pr-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#2563EB] shadow-sm"
-                />
-              </div>
-              <div className="relative">
-                <Mail className="absolute left-3 top-3 text-[#475569]" size={15} />
-                <input
-                  type="email"
-                  placeholder="Email Address"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-10 pr-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#2563EB] shadow-sm"
-                />
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 text-[#475569]" size={15} />
-                <input
-                  type="password"
-                  placeholder="Create Password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-10 pr-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#2563EB] shadow-sm"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-[#2563EB] text-white text-xs font-semibold py-2.5 rounded-lg shadow-sm hover:bg-[#2563EB]/95 transition-all disabled:opacity-50"
-              >
-                {loading ? "Registering..." : "Sign Up"}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {activeTab === "invite" && (
-          <form onSubmit={handleClaimInvite} className="space-y-4">
-            <div className="relative">
-              <Mail className="absolute left-3 top-3 text-[#475569]" size={15} />
-              <input
-                type="email"
-                placeholder="Registered Email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-10 pr-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#2563EB] shadow-sm"
-              />
-            </div>
-            <div className="relative">
-              <Lock className="absolute left-3 top-3 text-[#475569]" size={15} />
-              <input
-                type="text"
-                placeholder="Invitation Token UUID"
-                required
-                value={inviteToken}
-                onChange={(e) => setInviteToken(e.target.value)}
-                className="w-full bg-white border border-[#E2E8F0] rounded-lg pl-10 pr-3 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:border-[#2563EB] shadow-sm"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full bg-[#2563EB] text-white text-xs font-semibold py-2.5 rounded-lg shadow-sm hover:bg-[#2563EB]/95 transition-all flex items-center justify-center gap-2"
-            >
-              Verify Token Details
-              <ArrowRight size={14} />
-            </button>
-          </form>
-        )}
+        {/* Action Content */}
+        <div className="space-y-4">
+          <button
+            onClick={handleGoogleSignIn}
+            disabled={loading}
+            className="w-full bg-[#0F172A] hover:bg-[#0F172A]/90 border border-[#E2E8F0] text-white text-xs font-semibold py-3 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2.5 disabled:opacity-50 duration-200 cursor-pointer"
+          >
+            <GoogleIcon />
+            {loading ? "Initializing..." : "Sign In with Google"}
+          </button>
+          
+          <p className="text-[10px] text-center text-[#475569]">
+            OAuth authentication automatically signs you in or sets up your campus profile.
+          </p>
+        </div>
 
       </div>
     </div>

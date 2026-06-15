@@ -21,7 +21,7 @@ import {
 import { 
   BookOpen, Plus, Edit, Trash2, X, FolderPlus, 
   Folder, ArrowRight, Save, Clock, ChevronRight, 
-  ChevronDown, FileText, Link2, ExternalLink, Sparkles
+  ChevronDown, FileText, Link2, ExternalLink, Sparkles, Play
 } from "lucide-react";
 
 export default function LibraryBuilder() {
@@ -73,7 +73,7 @@ export default function LibraryBuilder() {
   const [lessonForm, setLessonForm] = useState({
     title: "",
     lesson_type_code: "text",
-    content_json_str: "{}",
+    content_text: "",
     video_url: "",
     duration: 15,
     position: 1,
@@ -241,14 +241,10 @@ export default function LibraryBuilder() {
     setError("");
     setSuccess("");
 
-    let content_json = {};
-    try {
-      content_json = JSON.parse(lessonForm.content_json_str);
-    } catch (err) {
-      setError("Content JSON must be valid JSON.");
-      setLoading(false);
-      return;
-    }
+    const content_json = {
+      body: lessonForm.content_text,
+      text: lessonForm.content_text
+    };
 
     let res;
     if (editingLesson) {
@@ -536,7 +532,7 @@ export default function LibraryBuilder() {
                                       setLessonForm({ 
                                         title: "", 
                                         lesson_type_code: "text",
-                                        content_json_str: "{}",
+                                        content_text: "",
                                         video_url: "",
                                         duration: 15, 
                                         position: (lessonsCache[mod.id]?.length || 0) + 1,
@@ -583,7 +579,7 @@ export default function LibraryBuilder() {
                                                 setLessonForm({ 
                                                   title: les.title, 
                                                   lesson_type_code: les.lesson_type_code,
-                                                  content_json_str: JSON.stringify(les.content_json || {}),
+                                                  content_text: les.content_json?.body || les.content_json?.text || "",
                                                   video_url: les.video_url || "",
                                                   duration: les.duration || 15, 
                                                   position: les.position || 1,
@@ -614,7 +610,16 @@ export default function LibraryBuilder() {
 
                                         {/* Lesson resources list (lazy loaded) */}
                                         {isLesExpanded && (
-                                          <div className="border-t border-slate-100 pt-2 mt-2 space-y-1 pl-4">
+                                          <div className="border-t border-slate-100 pt-2 mt-2 space-y-2 pl-4">
+                                            {les.video_url && (
+                                              <div className="flex items-center gap-1.5 text-[10px] bg-slate-50 px-2 py-1.5 rounded-lg border border-slate-200">
+                                                <Play size={10} className="fill-[#2563EB] text-[#2563EB] shrink-0" />
+                                                <span className="font-semibold text-slate-700">Video Link:</span>
+                                                <a href={les.video_url} target="_blank" rel="noopener noreferrer" className="truncate hover:underline text-[#2563EB] font-bold flex-1">
+                                                  {les.video_url}
+                                                </a>
+                                              </div>
+                                            )}
                                             <div className="flex items-center justify-between border-b border-slate-50 pb-1 mb-1">
                                               <span className="text-[9px] uppercase font-bold text-[#86868b]">Attached Resources</span>
                                               <button
@@ -981,13 +986,14 @@ export default function LibraryBuilder() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block font-bold text-[#475569]">Markdown content JSON *</label>
+                  <label className="block font-bold text-[#475569]">Learning Content (Markdown / Text) *</label>
                   <textarea
-                    placeholder='{"body": "Hello world"}'
-                    value={lessonForm.content_json_str}
-                    onChange={(e) => setLessonForm({ ...lessonForm, content_json_str: e.target.value })}
-                    rows={4}
-                    className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm font-mono resize-none text-[#0F172A]"
+                    placeholder="Enter markdown or text content for this lesson template..."
+                    value={lessonForm.content_text}
+                    onChange={(e) => setLessonForm({ ...lessonForm, content_text: e.target.value })}
+                    rows={6}
+                    className="w-full bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#2563EB] shadow-sm text-[#0F172A]"
+                    required
                   />
                 </div>
 

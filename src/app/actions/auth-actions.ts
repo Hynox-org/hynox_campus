@@ -17,16 +17,15 @@ export async function signInWithGoogle(redirectTo?: string) {
     provider: "google",
     options: {
       redirectTo: callbackUrl,
+      skipBrowserRedirect: true
     },
   });
 
   if (error) {
-    throw new Error(error.message);
+    return { error: error.message };
   }
 
-  if (data?.url) {
-    redirect(data.url);
-  }
+  return { url: data?.url };
 }
 
 export async function signOutAction() {
