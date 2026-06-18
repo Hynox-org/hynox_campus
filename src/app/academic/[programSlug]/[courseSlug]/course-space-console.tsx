@@ -550,7 +550,9 @@ export default function CourseSpaceConsole({
               <div className="space-y-2.5">
                 {(lessonResources[selectedLesson.id] || []).length > 0 ? (
                   (lessonResources[selectedLesson.id] || []).map((res) => {
-                    const isLink = !!res.external_url;
+                    const downloadUrl = res.external_url || res.file_url || res.resource_url;
+                    const isLink = res.resource_type === "link" || res.resource_type === "youtube" || res.resource_type === "google_drive" || !!res.external_url;
+                    
                     return (
                       <div 
                         key={res.id} 
@@ -563,22 +565,14 @@ export default function CourseSpaceConsole({
                         </div>
 
                         <div className="flex items-center gap-3 shrink-0">
-                          {isLink ? (
+                          {downloadUrl && (
                             <a 
-                              href={res.external_url} 
+                              href={downloadUrl} 
                               target="_blank" 
                               rel="noreferrer" 
                               className="text-[#2563EB] hover:underline flex items-center gap-0.5 text-[10px]"
                             >
-                              Open External Link <ExternalLink size={10} />
-                            </a>
-                          ) : (
-                            <a 
-                              href={res.file_url} 
-                              download
-                              className="text-[#2563EB] hover:underline flex items-center gap-0.5 text-[10px]"
-                            >
-                              Download File
+                              {isLink ? "Open Link" : "Download File"} <ExternalLink size={10} />
                             </a>
                           )}
 

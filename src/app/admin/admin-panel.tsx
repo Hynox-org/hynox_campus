@@ -88,6 +88,7 @@ import LibraryBuilder from "./library-builder";
 import ProgramManager from "./program-manager";
 import DeliveryManager from "./delivery-manager";
 import LearningManager from "./learning-manager";
+import AdminStudentProgress from "./student-progress";
 
 interface AdminPanelProps {
   adminEmail: string;
@@ -100,7 +101,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [activeParentTab, setActiveParentTab] = useState<"institutions" | "onboarding" | "library" | "programs" | "learning_manager">("institutions");
   const [selectedUserDetail, setSelectedUserDetail] = useState<any | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"institutions" | "add_institution" | "explorer" | "csv" | "onboarding" | "academics" | "library" | "programs" | "examine_programs" | "cohorts" | "enrollments" | "course_assignments" | "learning_manager" | "create_activity" | "view_activities" | "teacher_mapping">("institutions");
+  const [activeTab, setActiveTab] = useState<"institutions" | "add_institution" | "explorer" | "csv" | "onboarding" | "academics" | "library" | "programs" | "examine_programs" | "cohorts" | "enrollments" | "course_assignments" | "learning_manager" | "create_activity" | "view_activities" | "teacher_mapping" | "program_student_progress">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
   const [inviteSearch, setInviteSearch] = useState("");
@@ -990,13 +991,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
       {
         "Full Name": "Jane Doe",
         "Email": "jane.doe@school.edu",
-        "Role (student, teacher, institution_admin, mentor)": "student",
         "Institution ID (Do Not Modify)": selectedInstId
       },
       {
-        "Full Name": "Professor Plum",
-        "Email": "plum@school.edu",
-        "Role (student, teacher, institution_admin, mentor)": "teacher",
+        "Full Name": "John Smith",
+        "Email": "john.smith@school.edu",
         "Institution ID (Do Not Modify)": selectedInstId
       }
     ];
@@ -1006,16 +1005,15 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
       
       // Auto-fit column widths
       const colWidths = [
-        { wch: 20 }, // Full Name
-        { wch: 30 }, // Email
-        { wch: 45 }, // Role Instructions
+        { wch: 25 }, // Full Name
+        { wch: 35 }, // Email
         { wch: 40 }  // Institution ID
       ];
       worksheet["!cols"] = colWidths;
 
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Onboarding Template");
-      XLSX.writeFile(workbook, `hynox_onboarding_template_${slug}.xlsx`);
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Student Onboarding Template");
+      XLSX.writeFile(workbook, `hynox_student_onboarding_${slug}.xlsx`);
       setSuccess("Excel template generated successfully!");
     } catch (err: any) {
       setError(`Failed to generate Excel template: ${err.message}`);
@@ -1604,6 +1602,16 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                 >
                   Cohorts & Delivery
                 </button>
+                <button
+                  onClick={() => setActiveTab("program_student_progress")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "program_student_progress"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Student Progress
+                </button>
               </>
             )}
 
@@ -2158,14 +2166,14 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         <label className="block font-semibold text-[#86868b]">Spreadsheet Preview (Pasted or Loaded) *</label>
                         <button
                           type="button"
-                          onClick={() => setCsvContent(`name,email,role\nJane Doe,jane@school.edu,student\nJohn Smith,john@school.edu,teacher`)}
+                          onClick={() => setCsvContent(`name,email\nJane Doe,jane@school.edu\nJohn Smith,john@school.edu`)}
                           className="text-[10px] text-[#0066cc] hover:underline font-bold"
                         >
                           (Insert Sample Template)
                         </button>
                       </div>
                       <textarea
-                        placeholder="name,email,role,institution_id&#10;Jane Doe,jane.doe@college.edu,student&#10;Professor Plum,plum@college.edu,teacher"
+                        placeholder="name,email,institution_id&#10;Jane Doe,jane.doe@college.edu&#10;John Smith,john.smith@college.edu"
                         required
                         value={csvContent}
                         onChange={(e) => setCsvContent(e.target.value)}
@@ -2834,6 +2842,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
           {activeTab === "course_assignments" && (
             <div className="space-y-6 animate-fade-in">
               <DeliveryManager institutions={institutions} initialTab="assignments" />
+            </div>
+          )}
+
+          {activeTab === "program_student_progress" && (
+            <div className="space-y-6 animate-fade-in">
+              <AdminStudentProgress institutions={institutions} />
             </div>
           )}
 

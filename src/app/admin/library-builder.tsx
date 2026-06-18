@@ -620,6 +620,12 @@ export default function LibraryBuilder() {
                                                 </a>
                                               </div>
                                             )}
+                                            {(les.content_json?.body || les.content_json?.text) && (
+                                              <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg text-[10px] text-slate-700 leading-relaxed whitespace-pre-wrap max-h-40 overflow-y-auto">
+                                                <div className="font-bold text-[#86868b] text-[8px] uppercase tracking-wider mb-1 font-sans">Blueprint Learning Content</div>
+                                                {les.content_json.body || les.content_json.text}
+                                              </div>
+                                            )}
                                             <div className="flex items-center justify-between border-b border-slate-50 pb-1 mb-1">
                                               <span className="text-[9px] uppercase font-bold text-[#86868b]">Attached Resources</span>
                                               <button
@@ -641,6 +647,16 @@ export default function LibraryBuilder() {
                                                       <FileText size={10} className="shrink-0" />
                                                       <span className="truncate">{resrc.title}</span>
                                                       <span className="text-[8px] bg-slate-200 text-[#475569] px-1 rounded uppercase font-bold shrink-0">{resrc.resource_type}</span>
+                                                      {(resrc.file_url || resrc.external_url) && (
+                                                        <a 
+                                                          href={resrc.file_url || resrc.external_url} 
+                                                          target="_blank" 
+                                                          rel="noopener noreferrer" 
+                                                          className="text-[#2563EB] hover:underline shrink-0"
+                                                        >
+                                                          <ExternalLink size={9} />
+                                                        </a>
+                                                      )}
                                                     </div>
                                                     <button
                                                       onClick={async () => {

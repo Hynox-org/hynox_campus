@@ -191,3 +191,12 @@ export async function completeLessonProgressAction(userId: string, lessonId: str
     return { error: error.message || "Failed to complete lesson progress." };
   }
 }
+
+export async function listStudentLessonProgressAction(userId: string) {
+  try {
+    const data = await deliveryService.listStudentLessonProgress(userId);
+    return { success: true, progressList: data };
+  } catch (error: any) {
+    return { error: error.message || "Failed to list student lesson progress." };
+  }
+}

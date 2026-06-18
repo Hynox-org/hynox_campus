@@ -265,6 +265,13 @@ export async function getActivityDetailsNoStudentAction(activityId: string, acti
   try {
     const supabase = await createClient();
     
+    const { data: assignments } = await supabase
+      .schema("learning")
+      .from("activity_assignments")
+      .select("*")
+      .eq("activity_id", activityId)
+      .is("deleted_at", null);
+
     if (activityType === "quiz") {
       const { data: quiz, error: qError } = await supabase
         .schema("learning")
@@ -297,6 +304,7 @@ export async function getActivityDetailsNoStudentAction(activityId: string, acti
 
       return {
         quiz,
+        assignments: assignments || [],
         questions: (questions || []).map(q => ({
           ...q,
           options: options.filter(o => o.question_id === q.id)
@@ -310,7 +318,7 @@ export async function getActivityDetailsNoStudentAction(activityId: string, acti
         .eq("activity_id", activityId)
         .maybeSingle();
       if (pError) throw pError;
-      return { project };
+      return { project, assignments: assignments || [] };
     } else if (activityType === "programming") {
       const { data: challenge, error: cError } = await supabase
         .schema("learning")
@@ -337,6 +345,7 @@ export async function getActivityDetailsNoStudentAction(activityId: string, acti
 
       return {
         challenge,
+        assignments: assignments || [],
         examples: examples || [],
         testCases: testCases || []
       };
@@ -449,5 +458,56 @@ export async function listQuizAttemptsAction(tenantId: string) {
   }
 }
 
+export async function updateActivityAndSubclassAction(id: string, input: any) {
+  try {
+    const activity = await service.updateActivityAndSubclass(id, input);
+    revalidatePath("/admin");
+    return { success: true, activity };
+  } catch (error: any) {
+    return { error: error.message || "Failed to update learning activity." };
+  }
+}
 
+export async function ensureLessonProjectActivityAction(lessonId: string, studentId: string, courseId: string) {
+  try {
+    const res = await service.ensureLessonProjectActivity(lessonId, studentId, courseId);
+    revalidatePath("/student");
+    return res;
+  } catch (error: any) {
+    return { error: error.message || "Failed to ensure dynamic lesson activity." };
+  }
+}
 
+export async function deleteChallengeExampleAction(id: string) {
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .schema("learning")
+      .from("challenge_examples")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+    revalidatePath("/admin");
+    revalidatePath("/teacher");
+    return { success: true };
+  } catch (error: any) {
+    return { error: error.message || "Failed to delete challenge example." };
+  }
+}
+
+export async function deleteChallengeTestCaseAction(id: string) {
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase
+      .schema("learning")
+      .from("challenge_test_cases")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+    revalidatePath("/admin");
+    revalidatePath("/teacher");
+    return { success: true };
+  } catch (error: any) {
+    return { error: error.message || "Failed to delete challenge test case." };
+  }
+}

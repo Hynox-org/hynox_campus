@@ -22,7 +22,8 @@ import {
   submitChallengeCodeAction,
   getChallengeSubmissionResultsAction,
   getActiveQuizAttemptAction,
-  getQuizSessionDetailsAction
+  getQuizSessionDetailsAction,
+  ensureLessonProjectActivityAction
 } from "@/app/actions/learning-actions";
 import Link from "next/link";
 import { 
@@ -102,6 +103,13 @@ export default function StudentConsole({
   const [githubUrl, setGithubUrl] = useState("");
   const [submissionNotes, setSubmissionNotes] = useState("");
 
+  // Active lesson project state
+  const [lessonProjectDetails, setLessonProjectDetails] = useState<any | null>(null);
+  const [lessonProjectSubmission, setLessonProjectSubmission] = useState<any | null>(null);
+  const [lessonProjectReview, setLessonProjectReview] = useState<any | null>(null);
+  const [lessonGithubUrl, setLessonGithubUrl] = useState("");
+  const [lessonSubmissionNotes, setLessonSubmissionNotes] = useState("");
+
   // Active programming challenge state
   const [selectedChallengeActivity, setSelectedChallengeActivity] = useState<any | null>(null);
   const [challengeDetails, setChallengeDetails] = useState<any | null>(null);
@@ -130,7 +138,7 @@ export default function StudentConsole({
   };
 
   useEffect(() => {
-    loadActivities();
+    refreshStudentData();
   }, [studentId]);
 
   const refreshStudentData = async () => {
@@ -163,10 +171,33 @@ export default function StudentConsole({
   };
 
   const handleSelectCourse = async (course: any) => {
-    setSelectedCourse(course);
-    setActiveLesson(null);
     setLoading(true);
     setError("");
+    setActiveLesson(null);
+
+    // Sync and fetch latest program delivery course details (forces real-time progress calculations)
+    const deliverRes = await getStudentDeliveryDataAction(studentId);
+    if (deliverRes.programs) {
+      setPrograms(deliverRes.programs);
+      if (selectedProgram) {
+        const updatedProg = deliverRes.programs.find(p => p.id === selectedProgram.id);
+        if (updatedProg) {
+          setSelectedProgram(updatedProg);
+          const updatedCourse = updatedProg.courses.find((c: any) => c.id === course.id);
+          if (updatedCourse) {
+            setSelectedCourse(updatedCourse);
+          } else {
+            setSelectedCourse(course);
+          }
+        } else {
+          setSelectedCourse(course);
+        }
+      } else {
+        setSelectedCourse(course);
+      }
+    } else {
+      setSelectedCourse(course);
+    }
     
     const mRes = await listModulesAction(course.id);
     if (mRes.error) {
@@ -388,6 +419,119 @@ export default function StudentConsole({
     return () => clearInterval(interval);
   }, [activeAttempt, quizDetails, selectedAnswers]);
 
+  // Load associated activity and project details when active lesson changes
+  useEffect(() => {
+    async function loadLessonActivity() {
+      if (!activeLesson) {
+        setLessonProjectDetails(null);
+        setLessonProjectSubmission(null);
+        setLessonProjectReview(null);
+        setLessonGithubUrl("");
+        setLessonSubmissionNotes("");
+        return;
+      }
+
+      const typeCode = activeLesson.lesson_type?.code?.toLowerCase() || "";
+      const isAssignmentType = typeCode === "assignment" || typeCode === "assessment";
+
+      let assocAct = activities.find((a: any) => a.lesson_id === activeLesson.id);
+
+      // Dynamically auto-provision activity/project if it's an assignment/assessment but has no learning activity yet
+      if (!assocAct && isAssignmentType && selectedCourse) {
+        setActionLoading(true);
+        try {
+          const provisionRes = await ensureLessonProjectActivityAction(activeLesson.id, studentId, selectedCourse.id);
+          if (provisionRes && !("error" in provisionRes)) {
+            // Reload the activities from database
+            const reloadRes = await getStudentAssignedActivitiesAction(studentId);
+            if (reloadRes.activities) {
+              setActivities(reloadRes.activities);
+              assocAct = reloadRes.activities.find((a: any) => a.lesson_id === activeLesson.id);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to provision assignment/assessment activity on the fly:", err);
+        } finally {
+          setActionLoading(false);
+        }
+      }
+
+      if (assocAct && (assocAct.activity_type_code === "project" || assocAct.activity_type_code === "assignment")) {
+        setActionLoading(true);
+        try {
+          const pRes = await getProjectDetailsAction(assocAct.id, studentId);
+          if (pRes && "project" in pRes) {
+            setLessonProjectDetails(pRes.project);
+            setLessonProjectSubmission(pRes.submission);
+            setLessonProjectReview(pRes.review);
+            if (pRes.submission) {
+              setLessonGithubUrl(pRes.submission.github_url || "");
+              setLessonSubmissionNotes(pRes.submission.submission_notes || "");
+            } else {
+              setLessonGithubUrl("");
+              setLessonSubmissionNotes("");
+            }
+          }
+        } catch (err) {
+          console.error("Failed to load project details for active lesson:", err);
+        } finally {
+          setActionLoading(false);
+        }
+      } else {
+        setLessonProjectDetails(null);
+        setLessonProjectSubmission(null);
+        setLessonProjectReview(null);
+        setLessonGithubUrl("");
+        setLessonSubmissionNotes("");
+      }
+    }
+    loadLessonActivity();
+  }, [activeLesson, activities, studentId, selectedCourse]);
+
+  const handleLessonSubmitProjectUrl = async () => {
+    const assocAct = activities.find((a: any) => a.lesson_id === activeLesson.id);
+    if (!assocAct || !lessonGithubUrl.trim() || !lessonProjectDetails) return;
+    
+    if (!lessonGithubUrl.trim().startsWith("https://github.com/")) {
+      setError("Please provide a valid GitHub repository URL (starts with https://github.com/).");
+      setTimeout(() => setError(""), 4000);
+      return;
+    }
+
+    setActionLoading(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      const res = await submitProjectAction(
+        lessonProjectDetails.id,
+        studentId,
+        assocAct.progress?.id || "new",
+        lessonGithubUrl,
+        lessonSubmissionNotes
+      );
+
+      if (res.submission) {
+        setLessonProjectSubmission(res.submission);
+        
+        // Auto-complete the lesson progress in syllabus
+        if (selectedCourse) {
+          await completeLessonProgressAction(studentId, activeLesson.id, selectedCourse.id);
+        }
+        
+        setSuccess("Assignment submitted successfully and marked as completed!");
+        setTimeout(() => setSuccess(""), 4000);
+        await refreshStudentData();
+      } else if (res.error) {
+        setError(res.error);
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to submit assignment.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Project interactive flows
   const handleEnterProject = async (activity: any) => {
     setSelectedProjectActivity(activity);
@@ -497,7 +641,7 @@ export default function StudentConsole({
   const completedCourses = (selectedProgram?.courses || []).filter((c: any) => c.progress?.status_code === "completed").length;
 
   const quizCount = programActivities.filter(a => a.activity_type_code === "quiz").length;
-  const projectCount = programActivities.filter(a => a.activity_type_code === "project").length;
+  const projectCount = programActivities.filter(a => a.activity_type_code === "project" || a.activity_type_code === "assignment").length;
   const challengeCount = programActivities.filter(a => a.activity_type_code === "programming_challenge" || a.activity_type_code === "programming").length;
 
   const completedActivities = programActivities.filter(a => a.progress?.status_code === "completed" || a.progress?.status_code === "reviewed").length;
@@ -904,11 +1048,12 @@ export default function StudentConsole({
                   <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
                     {programActivities.filter(a => a.progress?.status_code !== "completed" && a.progress?.status_code !== "reviewed").length > 0 ? (
                       programActivities.filter(a => a.progress?.status_code !== "completed" && a.progress?.status_code !== "reviewed").map((act) => {
-                        const typeLabel = act.activity_type_code === "quiz" ? "Quiz" : act.activity_type_code === "project" ? "Project" : "Challenge";
+                        const isProjectOrAssignment = act.activity_type_code === "project" || act.activity_type_code === "assignment";
+                        const typeLabel = act.activity_type_code === "quiz" ? "Quiz" : isProjectOrAssignment ? "Assignment" : "Challenge";
                         const typeColor = 
                           act.activity_type_code === "quiz" 
                             ? "bg-purple-50 text-purple-700 border-purple-100" 
-                            : act.activity_type_code === "project"
+                            : isProjectOrAssignment
                             ? "bg-indigo-50 text-indigo-700 border-indigo-100"
                             : "bg-cyan-50 text-cyan-700 border-cyan-100";
                         
@@ -927,7 +1072,7 @@ export default function StudentConsole({
                                 if (act.activity_type_code === "quiz") {
                                   setActiveTab("quizzes");
                                   handleEnterQuiz(act);
-                                } else if (act.activity_type_code === "project") {
+                                } else if (isProjectOrAssignment) {
                                   setActiveTab("projects");
                                   handleEnterProject(act);
                                 } else {
@@ -1083,24 +1228,103 @@ export default function StudentConsole({
                           <p className="text-[9px] font-bold text-[#2563EB] uppercase tracking-wider">ACTIVE LESSON PLAYER</p>
                           <h4 className="font-bold text-sm text-[#0F172A] mt-0.5">{activeLesson.title}</h4>
                         </div>
-                        <div className="flex gap-2">
-                          {lessonProgressMap[activeLesson.id]?.status_code === "completed" ? (
-                            <span className="bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1">
-                              <CheckCircle size={12} /> Completed
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => handleCompleteLesson(activeLesson)}
-                              disabled={actionLoading}
-                              className="bg-[#2563EB] text-white px-3.5 py-1.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all text-[10px] flex items-center gap-1 disabled:opacity-50"
-                            >
-                              Mark as Completed
-                            </button>
-                          )}
+                         <div className="flex gap-2">
+                          {(() => {
+                            const isAssignment = activeLesson.lesson_type?.code?.toLowerCase() === "assignment" || activeLesson.lesson_type?.code?.toLowerCase() === "assessment";
+                            const isCompleted = lessonProgressMap[activeLesson.id]?.status_code === "completed";
+                            const hasSubmitted = !!lessonProjectSubmission;
+
+                            if (isAssignment) {
+                              if (isCompleted || hasSubmitted) {
+                                return (
+                                  <span className="bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                                    <CheckCircle size={12} /> Assignment Submitted
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span className="bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/20 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1 animate-pulse">
+                                  <AlertTriangle size={12} /> Pending Submission
+                                </span>
+                              );
+                            }
+
+                            if (isCompleted) {
+                              return (
+                                <span className="bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20 px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1">
+                                  <CheckCircle size={12} /> Completed
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <button
+                                onClick={() => handleCompleteLesson(activeLesson)}
+                                disabled={actionLoading}
+                                className="bg-[#2563EB] text-white px-3.5 py-1.5 rounded-lg shadow-sm font-semibold hover:bg-[#2563EB]/95 transition-all text-[10px] flex items-center gap-1 disabled:opacity-50"
+                              >
+                                Mark as Completed
+                              </button>
+                            );
+                          })()}
                         </div>
                       </div>
 
-                      {activeLesson.video_url && (() => {
+                      {(() => {
+                        // Check if it's a PDF lesson or has a PDF file
+                        const hasPdfUrl = activeLesson.video_url?.toLowerCase().endsWith(".pdf") || 
+                                          activeLesson.lesson_type?.code?.toLowerCase() === "pdf";
+                        
+                        if (hasPdfUrl) {
+                          // Try to resolve the PDF URL from video_url or from resources
+                          const pdfUrl = activeLesson.video_url || 
+                            activeLesson.resources?.find((r: any) => 
+                              r.resource_type === "pdf" || 
+                              r.external_url?.toLowerCase().endsWith(".pdf") ||
+                              r.file_url?.toLowerCase().endsWith(".pdf") ||
+                              r.resource_url?.toLowerCase().endsWith(".pdf")
+                            )?.external_url ||
+                            activeLesson.resources?.find((r: any) => 
+                              r.resource_type === "pdf" || 
+                              r.external_url?.toLowerCase().endsWith(".pdf") ||
+                              r.file_url?.toLowerCase().endsWith(".pdf") ||
+                              r.resource_url?.toLowerCase().endsWith(".pdf")
+                            )?.file_url ||
+                            activeLesson.resources?.find((r: any) => 
+                              r.resource_type === "pdf" || 
+                              r.external_url?.toLowerCase().endsWith(".pdf") ||
+                              r.file_url?.toLowerCase().endsWith(".pdf") ||
+                              r.resource_url?.toLowerCase().endsWith(".pdf")
+                            )?.resource_url;
+
+                          if (pdfUrl) {
+                            return (
+                              <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden shadow-sm h-[600px] w-full flex flex-col mb-4">
+                                <div className="bg-slate-50 border-b border-[#E2E8F0] px-4 py-2.5 flex items-center justify-between text-[10px]">
+                                  <span className="font-bold text-[#0F172A] flex items-center gap-1.5">
+                                    <File size={13} className="text-[#2563EB]" /> Embedded PDF Study Material
+                                  </span>
+                                  <a 
+                                    href={pdfUrl} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    className="text-[#2563EB] hover:underline font-bold flex items-center gap-0.5"
+                                  >
+                                    Open in New Tab <ExternalLink size={10} />
+                                  </a>
+                                </div>
+                                <iframe
+                                  src={pdfUrl}
+                                  className="w-full h-full border-0"
+                                  title={activeLesson.title}
+                                />
+                              </div>
+                            );
+                          }
+                        }
+
+                        if (!activeLesson.video_url) return null;
+
                         const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
                         const ytMatch = activeLesson.video_url.match(ytRegex);
                         const vimeoRegex = /vimeo\.com\/(?:video\/)?([0-9]+)/;
@@ -1108,7 +1332,7 @@ export default function StudentConsole({
                         
                         if (ytMatch && ytMatch[1]) {
                           return (
-                            <div className="bg-black aspect-video rounded-xl overflow-hidden border border-slate-805 shadow-sm">
+                            <div className="bg-black aspect-video rounded-xl overflow-hidden border border-slate-805 shadow-sm mb-4">
                               <iframe
                                 src={`https://www.youtube.com/embed/${ytMatch[1]}`}
                                 className="w-full h-full border-0"
@@ -1120,7 +1344,7 @@ export default function StudentConsole({
                           );
                         } else if (vimeoMatch && vimeoMatch[1]) {
                           return (
-                            <div className="bg-black aspect-video rounded-xl overflow-hidden border border-slate-805 shadow-sm">
+                            <div className="bg-black aspect-video rounded-xl overflow-hidden border border-slate-805 shadow-sm mb-4">
                               <iframe
                                 src={`https://player.vimeo.com/video/${vimeoMatch[1]}`}
                                 className="w-full h-full border-0"
@@ -1132,7 +1356,7 @@ export default function StudentConsole({
                           );
                         } else if (activeLesson.video_url.match(/\.(mp4|webm|ogg)/i) || activeLesson.video_url.includes("storage.googleapis.com") || activeLesson.video_url.includes("amazonaws.com")) {
                           return (
-                            <div className="bg-black aspect-video rounded-xl overflow-hidden border border-slate-805 shadow-sm">
+                            <div className="bg-black aspect-video rounded-xl overflow-hidden border border-slate-805 shadow-sm mb-4">
                               <video
                                 src={activeLesson.video_url}
                                 className="w-full h-full"
@@ -1143,7 +1367,7 @@ export default function StudentConsole({
                           );
                         } else {
                           return (
-                            <div className="bg-slate-900 aspect-video rounded-xl flex flex-col items-center justify-center text-white p-6 text-center border border-slate-800 shadow-sm">
+                            <div className="bg-slate-900 aspect-video rounded-xl flex flex-col items-center justify-center text-white p-6 text-center border border-slate-800 shadow-sm mb-4">
                               <Play size={32} className="text-[#2563EB] mb-2 fill-[#2563EB]" />
                               <p className="text-xs font-semibold mb-3">External Video Resource</p>
                               <a
@@ -1158,35 +1382,144 @@ export default function StudentConsole({
                           );
                         }
                       })()}
-
+ 
                       {(activeLesson.content_json?.body || activeLesson.content_json?.text) && (
-                        <div className="bg-white border border-[#E2E8F0] p-4 rounded-xl text-xs leading-relaxed text-[#0F172A]">
+                        <div className="bg-white border border-[#E2E8F0] p-5 rounded-xl text-xs leading-relaxed text-[#0F172A] whitespace-pre-wrap">
                           {activeLesson.content_json.body || activeLesson.content_json.text}
                         </div>
                       )}
-
+ 
                       {activeLesson.resources && activeLesson.resources.length > 0 && (
-                        <div className="bg-white border border-[#E2E8F0] rounded-xl p-3 space-y-2">
-                          <p className="text-[9px] font-bold uppercase tracking-wider text-[#475569]">Attachments & Code Templates</p>
-                          <div className="divide-y divide-[#E2E8F0]">
-                            {activeLesson.resources.map((res: any) => (
-                              <div key={res.id} className="py-2 flex items-center justify-between">
-                                <span className="font-semibold text-[#0f172a]">{res.title}</span>
-                                {res.external_url && (
-                                  <a 
-                                    href={res.external_url} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="text-[#2563EB] font-bold flex items-center gap-0.5"
-                                  >
-                                    View <ExternalLink size={10} />
-                                  </a>
-                                )}
-                              </div>
-                            ))}
+                        <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 space-y-3 shadow-2xs">
+                          <p className="text-[9px] font-bold uppercase tracking-wider text-[#475569] flex items-center gap-1">
+                            <File size={11} className="text-slate-400" /> Attached Reference Documents & Code blue prints
+                          </p>
+                          <div className="divide-y divide-[#E2E8F0] text-xs">
+                            {activeLesson.resources.map((res: any) => {
+                              const downloadUrl = res.external_url || res.file_url || res.resource_url;
+                              return (
+                                <div key={res.id} className="py-2.5 flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-[#0f172a]">{res.title}</span>
+                                    <span className="px-1.5 py-0.2 bg-slate-100 rounded text-[8px] text-[#475569] uppercase font-mono font-bold shrink-0">{res.resource_type || "File"}</span>
+                                  </div>
+                                  {downloadUrl && (
+                                    <a 
+                                      href={downloadUrl} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer" 
+                                      className="text-[#2563EB] font-bold flex items-center gap-0.5 hover:underline"
+                                    >
+                                      Open/Download <ExternalLink size={11} />
+                                    </a>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
+
+                      {/* Embedded Assignment/Project Submission Form directly in the lesson view */}
+                      {lessonProjectDetails && (() => {
+                        const isSubmitted = !!lessonProjectSubmission;
+                        const isReviewed = !!lessonProjectReview;
+                        
+                        return (
+                          <div className="border border-[#2563EB]/15 bg-slate-50/50 rounded-xl p-5 space-y-4">
+                            <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-2.5">
+                              <h4 className="font-bold text-xs text-[#0f172a] flex items-center gap-1.5 uppercase tracking-wider">
+                                <FolderCode className="text-[#2563EB]" size={14} /> Assignment Submission Drawer
+                              </h4>
+                              {isSubmitted && (
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase border ${
+                                  lessonProjectReview?.review_status === "approved"
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                    : lessonProjectReview?.review_status === "revision_requested"
+                                    ? "bg-rose-50 text-rose-700 border-rose-100"
+                                    : "bg-blue-50 text-blue-700 border-blue-100"
+                                }`}>
+                                  {lessonProjectReview?.review_status ? `Status: ${lessonProjectReview.review_status.replace('_', ' ')}` : "Pending Grade"}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 text-xs space-y-2.5">
+                              <div>
+                                <h5 className="font-bold text-[#0F172A] text-[11px]">Submission Specifications</h5>
+                                <p className="text-[#475569] mt-0.5 whitespace-pre-line leading-relaxed">{lessonProjectDetails.project_overview}</p>
+                              </div>
+                              {lessonProjectDetails.requirements && (
+                                <div>
+                                  <h5 className="font-bold text-[#0F172A] text-[11px]">Rubric Requirements</h5>
+                                  <p className="text-[#475569] mt-0.5 whitespace-pre-line leading-relaxed">{lessonProjectDetails.requirements}</p>
+                                </div>
+                              )}
+                              <div className="grid grid-cols-2 gap-4 pt-1.5 border-t border-[#E2E8F0] text-[10px] text-[#475569]">
+                                <div>Estimated Work: <span className="font-bold text-[#0F172A]">{lessonProjectDetails.estimated_hours || 0} hrs</span></div>
+                                <div>Max Score: <span className="font-bold text-[#0F172A]">{lessonProjectDetails.max_score} pts</span></div>
+                              </div>
+                            </div>
+
+                            {/* Form Input fields */}
+                            <div className="space-y-3.5">
+                              <div className="flex flex-col gap-1.5 text-xs">
+                                <label className="font-bold text-[#0f172a]">GitHub Project Repository Link *</label>
+                                <input
+                                  type="text"
+                                  value={lessonGithubUrl}
+                                  onChange={(e) => setLessonGithubUrl(e.target.value)}
+                                  placeholder="e.g. https://github.com/yourprofile/ml-regression-estimator"
+                                  className="bg-white border border-[#E2E8F0] rounded-lg px-3 py-2 w-full text-xs outline-none focus:border-[#2563EB] transition-all text-[#0F172A]"
+                                  disabled={isReviewed}
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1.5 text-xs">
+                                <label className="font-bold text-[#0f172a]">Submission Documentation / Notes</label>
+                                <textarea
+                                  value={lessonSubmissionNotes}
+                                  onChange={(e) => setLessonSubmissionNotes(e.target.value)}
+                                  placeholder="Paste testing commands, libraries installed, and summary of the evaluations..."
+                                  rows={3}
+                                  className="bg-white border border-[#E2E8F0] rounded-lg p-3 w-full text-xs outline-none focus:border-[#2563EB] transition-all text-[#0F172A]"
+                                  disabled={isReviewed}
+                                />
+                              </div>
+
+                              {!isReviewed ? (
+                                <button
+                                  onClick={handleLessonSubmitProjectUrl}
+                                  disabled={actionLoading || !lessonGithubUrl.trim()}
+                                  className="bg-[#2563EB] text-white px-4 py-2.5 rounded-lg font-bold hover:bg-[#2563EB]/95 transition-all text-xs disabled:opacity-50"
+                                >
+                                  {actionLoading ? "Submitting..." : isSubmitted ? "Resubmit Repository Link" : "Submit Assignment Link"}
+                                </button>
+                              ) : (
+                                <div className="bg-[#16A34A]/5 border border-[#16A34A]/25 rounded-xl p-4 space-y-2">
+                                  <h5 className="font-bold text-xs text-[#16A34A] uppercase tracking-wide">Teacher Grade & Review Report</h5>
+                                  <div className="grid grid-cols-2 gap-4 text-xs font-semibold">
+                                    <div>
+                                      <span className="text-[9px] text-[#475569] block font-normal">Score Awarded</span>
+                                      <span className="text-sm font-mono text-[#0F172A]">{lessonProjectReview.score !== null ? `${lessonProjectReview.score} / ${lessonProjectDetails.max_score} pts` : "Pending Points"}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-[9px] text-[#475569] block font-normal">Review Date</span>
+                                      <span className="text-[11px] text-[#0F172A]">{new Date(lessonProjectReview.created_at || lessonProjectReview.updated_at).toLocaleDateString()}</span>
+                                    </div>
+                                  </div>
+                                  {lessonProjectReview.feedback && (
+                                    <div className="bg-white p-3 rounded-lg border border-[#E2E8F0] text-xs text-[#475569] leading-relaxed">
+                                      <span className="font-bold text-[#0F172A] block text-[10px] uppercase mb-1">Teacher Feedback</span>
+                                      {lessonProjectReview.feedback}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 
@@ -1537,13 +1870,13 @@ export default function StudentConsole({
             {!selectedProjectActivity ? (
               <>
                 <h3 className="text-sm font-bold text-[#0F172A] border-b border-[#E2E8F0] pb-3 flex items-center gap-2">
-                  <FolderCode className="text-[#2563EB]" size={16} /> My Assigned Projects
+                  <FolderCode className="text-[#2563EB]" size={16} /> My Assigned Projects & Assignments
                 </h3>
                 {loadingActivities ? (
-                  <p className="text-slate-500 animate-pulse py-4 font-semibold text-center">Loading projects...</p>
-                ) : programActivities.filter(a => a.activity_type_code === "project").length > 0 ? (
+                  <p className="text-slate-500 animate-pulse py-4 font-semibold text-center">Loading projects & assignments...</p>
+                ) : programActivities.filter(a => a.activity_type_code === "project" || a.activity_type_code === "assignment").length > 0 ? (
                   <div className="space-y-4">
-                    {programActivities.filter(a => a.activity_type_code === "project").map((act) => (
+                    {programActivities.filter(a => a.activity_type_code === "project" || a.activity_type_code === "assignment").map((act) => (
                       <div key={act.id} className="border border-[#E2E8F0] rounded-xl p-4.5 bg-white flex justify-between items-center hover:shadow-md hover:border-[#2563EB]/15 transition-all">
                         <div>
                           <h4 className="font-bold text-xs text-[#0F172A]">{act.title}</h4>
@@ -1783,6 +2116,13 @@ export default function StudentConsole({
                           </div>
                           <p className="text-[#475569] leading-relaxed mt-2 whitespace-pre-line">{challengeDetails.problem_statement}</p>
                         </div>
+
+                        {challengeDetails.instructions && (
+                          <div className="bg-[#2563EB]/5 border border-[#2563EB]/15 p-3 rounded-lg text-xs text-[#0f172a] space-y-1">
+                            <span className="font-bold text-[#2563EB] block text-[9px] uppercase tracking-wider">💡 Instructions & Hints</span>
+                            <p className="leading-relaxed whitespace-pre-wrap">{challengeDetails.instructions}</p>
+                          </div>
+                        )}
 
                         {challengeDetails.input_format && (
                           <div>

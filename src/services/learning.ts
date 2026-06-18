@@ -758,12 +758,26 @@ export async function getProgrammingChallengeDetails(activityId: string, student
   const { data: challenge, error: chalError } = await supabase
     .schema("learning")
     .from("programming_challenges")
-    .select("*")
+    .select(`
+      *,
+      activities (
+        title,
+        description,
+        instructions
+      )
+    `)
     .eq("activity_id", activityId)
     .maybeSingle();
 
   if (chalError) throw chalError;
   if (!challenge) throw new Error("Programming challenge not found.");
+
+  const act = (challenge as any).activities;
+  if (act) {
+    (challenge as any).title = act.title;
+    (challenge as any).description = act.description;
+    (challenge as any).instructions = act.instructions;
+  }
 
   // Fetch or upsert progress status to 'started'
   const { data: assign } = await supabase
@@ -1238,6 +1252,48 @@ export async function assignActivityToCohort(input: {
   created_by?: string;
 }) {
   const supabase = await createClient();
+
+  // Validate cohort dates
+  const { data: cohort, error: cohortError } = await supabase
+    .schema("delivery")
+    .from("cohorts")
+    .select("start_date, end_date, name")
+    .eq("id", input.cohort_id)
+    .single();
+
+  if (cohortError) throw new Error("Target Cohort not found.");
+
+  if (cohort) {
+    const start = cohort.start_date ? new Date(cohort.start_date) : null;
+    const end = cohort.end_date ? new Date(cohort.end_date) : null;
+
+    if (input.available_from) {
+      const fromDate = new Date(input.available_from);
+      if (start && fromDate < start) {
+        throw new Error(`Available From date (${fromDate.toLocaleDateString()}) cannot be before cohort start date (${start.toLocaleDateString()}).`);
+      }
+      if (end && fromDate > end) {
+        throw new Error(`Available From date (${fromDate.toLocaleDateString()}) cannot be after cohort end date (${end.toLocaleDateString()}).`);
+      }
+    }
+    if (input.available_until) {
+      const untilDate = new Date(input.available_until);
+      if (start && untilDate < start) {
+        throw new Error(`Available Until date (${untilDate.toLocaleDateString()}) cannot be before cohort start date (${start.toLocaleDateString()}).`);
+      }
+      if (end && untilDate > end) {
+        throw new Error(`Available Until date (${untilDate.toLocaleDateString()}) cannot be after cohort end date (${end.toLocaleDateString()}).`);
+      }
+    }
+    if (input.available_from && input.available_until) {
+      const fromDate = new Date(input.available_from);
+      const untilDate = new Date(input.available_until);
+      if (fromDate > untilDate) {
+        throw new Error("Available From date cannot be after Available Until date.");
+      }
+    }
+  }
+
   const { data, error } = await supabase
     .schema("learning")
     .from("activity_assignments")
@@ -1254,6 +1310,177 @@ export async function assignActivityToCohort(input: {
 
   if (error) throw error;
   return data;
+}
+
+export async function updateActivityAndSubclass(id: string, input: {
+  activity_type_code: string;
+  title: string;
+  description?: string;
+  instructions?: string;
+  max_score?: number;
+  passing_score?: number;
+  is_mandatory?: boolean;
+  
+  quiz_time_limit?: number;
+  quiz_max_attempts?: number;
+  quiz_shuffle_questions?: boolean;
+  quiz_shuffle_options?: boolean;
+  quiz_show_results_immediately?: boolean;
+  
+  project_overview?: string;
+  project_requirements?: string;
+  project_deliverables?: string;
+  project_submission_instructions?: string;
+  project_difficulty?: string;
+  project_estimated_hours?: number;
+
+  chal_difficulty?: string;
+  chal_problem_statement?: string;
+  chal_input_format?: string;
+  chal_output_format?: string;
+  chal_constraints?: string;
+  chal_starter_code?: string;
+  chal_time_limit?: number;
+  chal_memory_limit?: number;
+
+  assignments?: Array<{
+    id: string;
+    available_from?: string;
+    available_until?: string;
+    is_required?: boolean;
+    cohort_id: string;
+  }>;
+}) {
+  const supabase = await createClient();
+
+  // Validate and update assignments if any
+  if (input.assignments && input.assignments.length > 0) {
+    for (const assign of input.assignments) {
+      // Validate cohort dates
+      const { data: cohort } = await supabase
+        .schema("delivery")
+        .from("cohorts")
+        .select("start_date, end_date")
+        .eq("id", assign.cohort_id)
+        .single();
+
+      if (cohort) {
+        const start = cohort.start_date ? new Date(cohort.start_date) : null;
+        const end = cohort.end_date ? new Date(cohort.end_date) : null;
+
+        if (assign.available_from) {
+          const fromDate = new Date(assign.available_from);
+          if (start && fromDate < start) {
+            throw new Error(`Available From date (${fromDate.toLocaleDateString()}) cannot be before cohort start date (${start.toLocaleDateString()}).`);
+          }
+          if (end && fromDate > end) {
+            throw new Error(`Available From date (${fromDate.toLocaleDateString()}) cannot be after cohort end date (${end.toLocaleDateString()}).`);
+          }
+        }
+        if (assign.available_until) {
+          const untilDate = new Date(assign.available_until);
+          if (start && untilDate < start) {
+            throw new Error(`Available Until date (${untilDate.toLocaleDateString()}) cannot be before cohort start date (${start.toLocaleDateString()}).`);
+          }
+          if (end && untilDate > end) {
+            throw new Error(`Available Until date (${untilDate.toLocaleDateString()}) cannot be after cohort end date (${end.toLocaleDateString()}).`);
+          }
+        }
+        if (assign.available_from && assign.available_until) {
+          const fromDate = new Date(assign.available_from);
+          const untilDate = new Date(assign.available_until);
+          if (fromDate > untilDate) {
+            throw new Error("Available From date cannot be after Available Until date.");
+          }
+        }
+      }
+
+      // Update the assignment in database
+      const { error: assignUpdateError } = await supabase
+        .schema("learning")
+        .from("activity_assignments")
+        .update({
+          available_from: assign.available_from || null,
+          available_until: assign.available_until || null,
+          is_required: assign.is_required ?? true,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", assign.id);
+
+      if (assignUpdateError) throw assignUpdateError;
+    }
+  }
+
+  // 1. Update Base Activity
+  const { data: activity, error: actError } = await supabase
+    .schema("learning")
+    .from("activities")
+    .update({
+      title: input.title,
+      description: input.description || null,
+      instructions: input.instructions || null,
+      max_score: input.max_score ?? 100,
+      passing_score: input.passing_score ?? 0,
+      is_mandatory: input.is_mandatory ?? true,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (actError) throw actError;
+
+  // 2. Update Type Subclass
+  if (input.activity_type_code === "quiz") {
+    const { error: subError } = await supabase
+      .schema("learning")
+      .from("quizzes")
+      .update({
+        time_limit_minutes: input.quiz_time_limit || null,
+        max_attempts: input.quiz_max_attempts ?? 1,
+        shuffle_questions: input.quiz_shuffle_questions ?? false,
+        shuffle_options: input.quiz_shuffle_options ?? false,
+        show_results_immediately: input.quiz_show_results_immediately ?? true,
+        updated_at: new Date().toISOString()
+      })
+      .eq("activity_id", id);
+    if (subError) throw subError;
+  } else if (input.activity_type_code === "project") {
+    const { error: subError } = await supabase
+      .schema("learning")
+      .from("projects")
+      .update({
+        project_overview: input.project_overview || "",
+        requirements: input.project_requirements || null,
+        deliverables: input.project_deliverables || null,
+        submission_instructions: input.project_submission_instructions || null,
+        difficulty_level: input.project_difficulty || "intermediate",
+        estimated_hours: input.project_estimated_hours || null,
+        max_score: input.max_score ?? 100,
+        updated_at: new Date().toISOString()
+      })
+      .eq("activity_id", id);
+    if (subError) throw subError;
+  } else if (input.activity_type_code === "programming_challenge" || input.activity_type_code === "programming") {
+    const { error: subError } = await supabase
+      .schema("learning")
+      .from("programming_challenges")
+      .update({
+        difficulty_level: input.chal_difficulty || "easy",
+        problem_statement: input.chal_problem_statement || "",
+        input_format: input.chal_input_format || null,
+        output_format: input.chal_output_format || null,
+        constraints_text: input.chal_constraints || null,
+        starter_code: input.chal_starter_code || null,
+        time_limit_ms: input.chal_time_limit || 1000,
+        memory_limit_mb: input.chal_memory_limit || 256,
+        updated_at: new Date().toISOString()
+      })
+      .eq("activity_id", id);
+    if (subError) throw subError;
+  }
+
+  return activity;
 }
 
 // ----------------------------------------------------
@@ -1442,5 +1669,128 @@ export async function listChallengeSubmissions(tenantId: string) {
       result
     };
   });
+}
+
+export async function ensureLessonProjectActivity(lessonId: string, studentId: string, courseId: string) {
+  const supabase = await createClient();
+
+  // 1. Check if activity already exists for this lesson
+  let { data: activity, error: actError } = await supabase
+    .schema("learning")
+    .from("activities")
+    .select("*")
+    .eq("lesson_id", lessonId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (actError) throw actError;
+
+  // 2. If it does not exist, query the lesson info
+  if (!activity) {
+    const { data: lesson, error: lesError } = await supabase
+      .schema("academic")
+      .from("lessons")
+      .select("title, tenant_id, institution_id")
+      .eq("id", lessonId)
+      .single();
+
+    if (lesError) throw lesError;
+    if (!lesson) throw new Error("Lesson not found");
+
+    // Insert new published activity of type "assignment" or "project"
+    const { data: newAct, error: createActError } = await supabase
+      .schema("learning")
+      .from("activities")
+      .insert({
+        tenant_id: lesson.tenant_id,
+        institution_id: lesson.institution_id,
+        lesson_id: lessonId,
+        activity_type_code: "assignment", // default type
+        status_code: "published",
+        title: lesson.title,
+        description: `Hands-on submission for ${lesson.title}`,
+        max_score: 100,
+        passing_score: 50,
+        is_mandatory: true
+      })
+      .select()
+      .single();
+
+    if (createActError) throw createActError;
+    activity = newAct;
+  }
+
+  if (!activity) throw new Error("Failed to resolve activity");
+
+  // 3. Make sure projects entry exists for this activity
+  let { data: project, error: projError } = await supabase
+    .schema("learning")
+    .from("projects")
+    .select("*")
+    .eq("activity_id", activity.id)
+    .maybeSingle();
+
+  if (projError) throw projError;
+
+  if (!project) {
+    const { data: newProj, error: createProjError } = await supabase
+      .schema("learning")
+      .from("projects")
+      .insert({
+        activity_id: activity.id,
+        project_overview: `Please complete the assignment details for ${activity.title} and submit your GitHub URL repository link.`,
+        requirements: "Complete all guidelines described in the lesson curriculum.",
+        deliverables: "GitHub repository URL.",
+        difficulty_level: "intermediate",
+        estimated_hours: 4,
+        max_score: 100
+      })
+      .select()
+      .single();
+
+    if (createProjError) throw createProjError;
+    project = newProj;
+  }
+
+  // 4. Ensure activity assignment exists for student's cohort(s)
+  // Fetch student's active cohorts
+  const { data: enrollments } = await supabase
+    .schema("delivery")
+    .from("enrollments")
+    .select("cohort_id")
+    .eq("user_id", studentId)
+    .eq("status_code", "active")
+    .is("deleted_at", null);
+
+  const cohortIds = (enrollments || []).map(e => e.cohort_id);
+
+  if (cohortIds.length > 0) {
+    for (const cohortId of cohortIds) {
+      // Check if assignment already exists
+      const { data: assign } = await supabase
+        .schema("learning")
+        .from("activity_assignments")
+        .select("id")
+        .eq("activity_id", activity.id)
+        .eq("cohort_id", cohortId)
+        .is("deleted_at", null)
+        .maybeSingle();
+
+      if (!assign) {
+        // Insert assignment for this cohort
+        await supabase
+          .schema("learning")
+          .from("activity_assignments")
+          .insert({
+            activity_id: activity.id,
+            cohort_id: cohortId,
+            is_required: true,
+            available_from: new Date().toISOString()
+          });
+      }
+    }
+  }
+
+  return { success: true, activityId: activity.id };
 }
 

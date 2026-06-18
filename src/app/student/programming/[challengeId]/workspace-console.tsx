@@ -236,6 +236,13 @@ export default function WorkspaceConsole({
               </p>
             </div>
 
+            {challenge.instructions && (
+              <div className="bg-[#2563EB]/5 border border-[#2563EB]/15 p-3 rounded-lg text-xs text-[#0f172a] space-y-1">
+                <span className="font-bold text-[#2563EB] block text-[9px] uppercase tracking-wider">💡 Instructions & Hints</span>
+                <p className="leading-relaxed whitespace-pre-wrap">{challenge.instructions}</p>
+              </div>
+            )}
+
             {challenge.input_format && (
               <div className="space-y-1">
                 <h3 className="text-[10px] font-bold uppercase tracking-wider text-[#0F172A]">Input Format</h3>

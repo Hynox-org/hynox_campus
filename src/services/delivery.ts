@@ -191,16 +191,112 @@ export async function listEnrollments(tenantId: string) {
     students = userData || [];
   }
 
-  return filtered.map((e: any) => ({
-    ...e,
-    student: students.find(s => s.id === e.user_id) || null
-  }));
+  // Fetch course progress & course assignments to calculate actual progress percentage
+  let assignments: any[] = [];
+  try {
+    const { data: assignData } = await supabase
+      .schema("delivery")
+      .from("course_assignments")
+      .select("*")
+      .is("deleted_at", null);
+    assignments = assignData || [];
+  } catch (err) {
+    console.error("Failed to fetch assignments in listEnrollments:", err);
+  }
+
+  let progressRecords: any[] = [];
+  try {
+    const { data: progData } = await supabase
+      .schema("delivery")
+      .from("course_progress")
+      .select("*")
+      .in("user_id", studentIds);
+    progressRecords = progData || [];
+  } catch (err) {
+    console.error("Failed to fetch course progress in listEnrollments:", err);
+  }
+
+  return filtered.map((e: any) => {
+    const student = students.find(s => s.id === e.user_id) || null;
+    
+    // Find course assignments for this cohort
+    const cohortAssignments = assignments.filter(a => a.cohort_id === e.cohort_id);
+    const assignedCourseIds = cohortAssignments.map(a => a.course_id);
+    
+    // Find student course progress for these courses
+    const studentProgress = progressRecords.filter(p => p.user_id === e.user_id && assignedCourseIds.includes(p.course_id));
+    
+    // Calculate average progress percentage
+    let totalProgress = 0;
+    const count = assignedCourseIds.length;
+    if (count > 0) {
+      for (const courseId of assignedCourseIds) {
+        const prog = studentProgress.find(p => p.course_id === courseId);
+        totalProgress += prog ? (prog.progress_percentage || 0) : 0;
+      }
+    }
+    const avgProgress = count > 0 ? parseFloat((totalProgress / count).toFixed(2)) : 0;
+
+    return {
+      ...e,
+      student,
+      progress_percentage: avgProgress
+    };
+  });
 }
 
 export async function enrollStudent(input: EnrollmentInput) {
   const supabase = await createClient();
   const session = await getSessionTenant();
   if (!session) throw new Error("No active session found.");
+
+  // Get current cohort details
+  const { data: currentCohort, error: ccError } = await supabase
+    .schema("delivery")
+    .from("cohorts")
+    .select("program_id, name, start_date, end_date, status_code")
+    .eq("id", input.cohort_id)
+    .single();
+
+  if (ccError || !currentCohort) throw new Error("Cohort not found.");
+
+  const isCohortActive = (cohort: any) => {
+    if (cohort.status_code !== "active") return false;
+    const now = new Date();
+    if (cohort.end_date && new Date(cohort.end_date) < now) return false;
+    return true;
+  };
+
+  if (input.status_code === "active" && isCohortActive(currentCohort)) {
+    // Check if student has active enrollment in another active cohort of this program
+    const { data: existingEnrollments, error: eeError } = await supabase
+      .schema("delivery")
+      .from("enrollments")
+      .select(`
+        id,
+        status_code,
+        cohort:cohort_id (
+          id,
+          name,
+          program_id,
+          status_code,
+          start_date,
+          end_date
+        )
+      `)
+      .eq("user_id", input.user_id)
+      .eq("status_code", "active")
+      .is("deleted_at", null);
+
+    if (eeError) throw eeError;
+
+    for (const enroll of (existingEnrollments || [])) {
+      const cohort = enroll.cohort as any;
+      if (cohort && cohort.program_id === currentCohort.program_id && isCohortActive(cohort)) {
+        throw new Error(`Student is already active in another active cohort "${cohort.name}" of this program.`);
+      }
+    }
+  }
 
   const { data, error } = await supabase
     .schema("delivery")
@@ -220,6 +316,69 @@ export async function enrollStudent(input: EnrollmentInput) {
 
 export async function updateEnrollmentStatus(id: string, status_code: string) {
   const supabase = await createClient();
+
+  const isCohortActive = (cohort: any) => {
+    if (cohort.status_code !== "active") return false;
+    const now = new Date();
+    if (cohort.end_date && new Date(cohort.end_date) < now) return false;
+    return true;
+  };
+
+  if (status_code === "active") {
+    // Get the current enrollment details
+    const { data: currentEnroll, error: ceError } = await supabase
+      .schema("delivery")
+      .from("enrollments")
+      .select(`
+        user_id,
+        cohort:cohort_id (
+          id,
+          name,
+          program_id,
+          status_code,
+          start_date,
+          end_date
+        )
+      `)
+      .eq("id", id)
+      .single();
+
+    if (ceError || !currentEnroll) throw new Error("Enrollment not found.");
+
+    const currentCohort = currentEnroll.cohort as any;
+    if (currentCohort && isCohortActive(currentCohort)) {
+      // Check if student has active enrollment in another active cohort of this program
+      const { data: existingEnrollments, error: eeError } = await supabase
+        .schema("delivery")
+        .from("enrollments")
+        .select(`
+          id,
+          status_code,
+          cohort:cohort_id (
+            id,
+            name,
+            program_id,
+            status_code,
+            start_date,
+            end_date
+          )
+        `)
+        .eq("user_id", currentEnroll.user_id)
+        .eq("status_code", "active")
+        .neq("id", id) // exclude this enrollment itself
+        .is("deleted_at", null);
+
+      if (eeError) throw eeError;
+
+      for (const enroll of (existingEnrollments || [])) {
+        const cohort = enroll.cohort as any;
+        if (cohort && cohort.program_id === currentCohort.program_id && isCohortActive(cohort)) {
+          throw new Error(`Student is already active in another active cohort "${cohort.name}" of this program.`);
+        }
+      }
+    }
+  }
+
   const { data, error } = await supabase
     .schema("delivery")
     .from("enrollments")
@@ -479,14 +638,8 @@ export async function getStudentDeliveryData(userId: string) {
         const course = courses.find(c => c.id === assignment.course_id);
         if (!course) continue;
 
-        // Fetch course progress record
-        const { data: progressRecord } = await supabase
-          .schema("delivery")
-          .from("course_progress")
-          .select("*")
-          .eq("user_id", userId)
-          .eq("course_id", course.id)
-          .maybeSingle();
+        // Recalculate/Sync course progress to account for dynamic teacher modifications
+        const progressRecord = await syncCourseProgress(userId, course.id);
 
         // Check if course is already added from another cohort to avoid duplicates
         const existingCourse = resultProgramsMap[program.id].courses.find((c: any) => c.id === course.id);
@@ -716,4 +869,16 @@ export async function syncCourseProgress(userId: string, courseId: string) {
 
   if (error) throw error;
   return data;
+}
+
+export async function listStudentLessonProgress(userId: string) {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .schema("delivery")
+    .from("lesson_progress")
+    .select("*")
+    .eq("user_id", userId);
+    
+  if (error) throw error;
+  return data || [];
 }

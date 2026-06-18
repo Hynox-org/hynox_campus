@@ -14,9 +14,12 @@ import {
   listEnrollmentsAction,
   listCourseAssignmentsAction,
   listInstitutionStudentsAction,
-  getDeliveryLookupsAction
+  getDeliveryLookupsAction,
+  getStudentDeliveryDataAction,
+  listStudentLessonProgressAction
 } from "@/app/actions/delivery-actions";
-import { listProgramsAction, listCoursesAction } from "@/app/actions/academic-actions";
+import { listProgramsAction, listCoursesAction, listLessonsForCourseAction } from "@/app/actions/academic-actions";
+import { listAllActivitiesAction, listQuizAttemptsAction, listProjectSubmissionsAction, listChallengeSubmissionsAction } from "@/app/actions/learning-actions";
 import { 
   Building, 
   Users, 
@@ -28,7 +31,13 @@ import {
   Calendar, 
   Check, 
   AlertCircle,
-  FileText
+  FileText,
+  TrendingUp,
+  Award,
+  Clock,
+  ExternalLink,
+  ChevronDown,
+  X
 } from "lucide-react";
 
 interface DeliveryManagerProps {
@@ -74,6 +83,7 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
 
   const [enrollModalOpen, setEnrollModalOpen] = useState(false);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
   const [enrollForm, setEnrollForm] = useState({
     user_id: "",
     cohort_id: "",
@@ -89,6 +99,79 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
     due_date: "",
     is_required: true
   });
+
+  // Selected Student Drawer States
+  const [selectedStudent, setSelectedStudent] = useState<any | null>(null);
+  const [activeStudentProgress, setActiveStudentProgress] = useState<any[]>([]);
+  const [activeStudentLessonsProgress, setActiveStudentLessonsProgress] = useState<any[]>([]);
+  const [drawerLessonsCache, setDrawerLessonsCache] = useState<Record<string, any[]>>({});
+  const [studentDetailTab, setStudentDetailTab] = useState<"overview" | "syllabus" | "quizzes" | "projects" | "challenges">("overview");
+
+  // Accordion drawer selection states
+  const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
+  const [expandedQuizId, setExpandedQuizId] = useState<string | null>(null);
+  const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
+
+  // Loaded activity datasets
+  const [quizAttempts, setQuizAttempts] = useState<any[]>([]);
+  const [projectSubmissions, setProjectSubmissions] = useState<any[]>([]);
+  const [challengeSubmissions, setChallengeSubmissions] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
+
+  // Fetch drawer details on student click
+  useEffect(() => {
+    if (selectedStudent) {
+      const studentId = selectedStudent.user_id;
+
+      getStudentDeliveryDataAction(studentId).then(res => {
+        if (res.success && res.programs) {
+          setActiveStudentProgress(res.programs);
+        } else {
+          setActiveStudentProgress([]);
+        }
+      });
+
+      listStudentLessonProgressAction(studentId).then(res => {
+        if (res.success && res.progressList) {
+          setActiveStudentLessonsProgress(res.progressList);
+        } else {
+          setActiveStudentLessonsProgress([]);
+        }
+      });
+    } else {
+      setActiveStudentProgress([]);
+      setActiveStudentLessonsProgress([]);
+    }
+  }, [selectedStudent]);
+
+  // Lazy load lessons inside selected student drawer
+  useEffect(() => {
+    if (expandedCourseId && !drawerLessonsCache[expandedCourseId]) {
+      listLessonsForCourseAction(expandedCourseId).then(res => {
+        if (res.success && res.lessons) {
+          setDrawerLessonsCache(prev => ({ ...prev, [expandedCourseId]: res.lessons }));
+        }
+      });
+    }
+  }, [expandedCourseId, drawerLessonsCache]);
+
+  // Fetch lookups and learning data on load
+  useEffect(() => {
+    async function loadLearningData() {
+      const actRes = await listAllActivitiesAction(selectedInstId);
+      if (actRes.activities) setActivities(actRes.activities);
+
+      const qaRes = await listQuizAttemptsAction(selectedInstId);
+      if (qaRes.attempts) setQuizAttempts(qaRes.attempts);
+
+      const psRes = await listProjectSubmissionsAction(selectedInstId);
+      if (psRes.submissions) setProjectSubmissions(psRes.submissions);
+
+      const csRes = await listChallengeSubmissionsAction(selectedInstId);
+      if (csRes.submissions) setChallengeSubmissions(csRes.submissions);
+    }
+    loadLearningData();
+  }, [selectedInstId]);
 
   // Load initial lookups
   useEffect(() => {
@@ -153,41 +236,48 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
     e.preventDefault();
     setError("");
     setSuccess("");
+    setLoading(true);
     
-    if (editingCohort) {
-      const res = await updateCohortAction(editingCohort.id, {
-        name: cohortForm.name,
-        code: cohortForm.code,
-        start_date: cohortForm.start_date || undefined,
-        end_date: cohortForm.end_date || undefined,
-        status_code: cohortForm.status_code
-      });
-      if (res.error) {
-        setError(res.error);
+    try {
+      if (editingCohort) {
+        const res = await updateCohortAction(editingCohort.id, {
+          name: cohortForm.name,
+          code: cohortForm.code,
+          start_date: cohortForm.start_date || undefined,
+          end_date: cohortForm.end_date || undefined,
+          status_code: cohortForm.status_code
+        });
+        if (res.error) {
+          setError(res.error);
+        } else {
+          setSuccess("Cohort updated successfully!");
+          setCohortModalOpen(false);
+          setEditingCohort(null);
+          await refreshLists();
+        }
       } else {
-        setSuccess("Cohort updated successfully!");
-        setCohortModalOpen(false);
-        setEditingCohort(null);
-        await refreshLists();
+        const res = await createCohortAction({
+          tenant_id: selectedInstId,
+          institution_id: selectedInstId,
+          program_id: cohortForm.program_id,
+          name: cohortForm.name,
+          code: cohortForm.code,
+          start_date: cohortForm.start_date || undefined,
+          end_date: cohortForm.end_date || undefined,
+          status_code: cohortForm.status_code
+        });
+        if (res.error) {
+          setError(res.error);
+        } else {
+          setSuccess("Cohort created successfully!");
+          setCohortModalOpen(false);
+          await refreshLists();
+        }
       }
-    } else {
-      const res = await createCohortAction({
-        tenant_id: selectedInstId,
-        institution_id: selectedInstId,
-        program_id: cohortForm.program_id,
-        name: cohortForm.name,
-        code: cohortForm.code,
-        start_date: cohortForm.start_date || undefined,
-        end_date: cohortForm.end_date || undefined,
-        status_code: cohortForm.status_code
-      });
-      if (res.error) {
-        setError(res.error);
-      } else {
-        setSuccess("Cohort created successfully!");
-        setCohortModalOpen(false);
-        await refreshLists();
-      }
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -277,68 +367,75 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
     e.preventDefault();
     setError("");
     setSuccess("");
+    setLoading(true);
 
-    const isAlreadyAssigned = assignments.some(
-      ass => ass.cohort_id === assignForm.cohort_id && ass.course_id === assignForm.course_id
-    );
-    if (isAlreadyAssigned) {
-      setError("This course is already assigned to the selected cohort.");
-      return;
-    }
+    try {
+      const isAlreadyAssigned = assignments.some(
+        ass => ass.cohort_id === assignForm.cohort_id && ass.course_id === assignForm.course_id
+      );
+      if (isAlreadyAssigned) {
+        setError("This course is already assigned to the selected cohort.");
+        return;
+      }
 
-    const selectedCohort = cohorts.find(c => c.id === assignForm.cohort_id);
-    if (selectedCohort) {
-      const cohortStart = selectedCohort.start_date ? new Date(selectedCohort.start_date) : null;
-      const cohortEnd = selectedCohort.end_date ? new Date(selectedCohort.end_date) : null;
+      const selectedCohort = cohorts.find(c => c.id === assignForm.cohort_id);
+      if (selectedCohort) {
+        const cohortStart = selectedCohort.start_date ? new Date(selectedCohort.start_date) : null;
+        const cohortEnd = selectedCohort.end_date ? new Date(selectedCohort.end_date) : null;
 
-      if (assignForm.start_date) {
-        const assignStart = new Date(assignForm.start_date);
-        if (cohortStart && assignStart < cohortStart) {
-          setError(`Course assignment start date cannot be before cohort start date (${selectedCohort.start_date.split('T')[0]}).`);
-          return;
+        if (assignForm.start_date) {
+          const assignStart = new Date(assignForm.start_date);
+          if (cohortStart && assignStart < cohortStart) {
+            setError(`Course assignment start date cannot be before cohort start date (${selectedCohort.start_date.split('T')[0]}).`);
+            return;
+          }
+          if (cohortEnd && assignStart > cohortEnd) {
+            setError(`Course assignment start date cannot be after cohort end date (${selectedCohort.end_date.split('T')[0]}).`);
+            return;
+          }
         }
-        if (cohortEnd && assignStart > cohortEnd) {
-          setError(`Course assignment start date cannot be after cohort end date (${selectedCohort.end_date.split('T')[0]}).`);
-          return;
+
+        if (assignForm.due_date) {
+          const assignDue = new Date(assignForm.due_date);
+          if (cohortStart && assignDue < cohortStart) {
+            setError(`Course assignment due/end date cannot be before cohort start date (${selectedCohort.start_date.split('T')[0]}).`);
+            return;
+          }
+          if (cohortEnd && assignDue > cohortEnd) {
+            setError(`Course assignment due/end date cannot be after cohort end date (${selectedCohort.end_date.split('T')[0]}).`);
+            return;
+          }
+        }
+
+        if (assignForm.start_date && assignForm.due_date) {
+          const assignStart = new Date(assignForm.start_date);
+          const assignDue = new Date(assignForm.due_date);
+          if (assignStart > assignDue) {
+            setError("Course assignment start date cannot be after due date.");
+            return;
+          }
         }
       }
 
-      if (assignForm.due_date) {
-        const assignDue = new Date(assignForm.due_date);
-        if (cohortStart && assignDue < cohortStart) {
-          setError(`Course assignment due/end date cannot be before cohort start date (${selectedCohort.start_date.split('T')[0]}).`);
-          return;
-        }
-        if (cohortEnd && assignDue > cohortEnd) {
-          setError(`Course assignment due/end date cannot be after cohort end date (${selectedCohort.end_date.split('T')[0]}).`);
-          return;
-        }
+      const res = await assignCourseAction({
+        cohort_id: assignForm.cohort_id,
+        course_id: assignForm.course_id,
+        start_date: assignForm.start_date || undefined,
+        due_date: assignForm.due_date || undefined,
+        is_required: assignForm.is_required
+      });
+
+      if (res.error) {
+        setError(res.error);
+      } else {
+        setSuccess("Course successfully assigned to cohort!");
+        setAssignModalOpen(false);
+        await refreshLists();
       }
-
-      if (assignForm.start_date && assignForm.due_date) {
-        const assignStart = new Date(assignForm.start_date);
-        const assignDue = new Date(assignForm.due_date);
-        if (assignStart > assignDue) {
-          setError("Course assignment start date cannot be after due date.");
-          return;
-        }
-      }
-    }
-
-    const res = await assignCourseAction({
-      cohort_id: assignForm.cohort_id,
-      course_id: assignForm.course_id,
-      start_date: assignForm.start_date || undefined,
-      due_date: assignForm.due_date || undefined,
-      is_required: assignForm.is_required
-    });
-
-    if (res.error) {
-      setError(res.error);
-    } else {
-      setSuccess("Course successfully assigned to cohort!");
-      setAssignModalOpen(false);
-      await refreshLists();
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -531,6 +628,7 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
                   !enrollments.some(e => e.cohort_id === defaultCohortId && e.user_id === stu.id)
                 );
                 setSelectedStudentIds(eligible.map(s => s.id));
+                setStudentSearchQuery("");
                 setEnrollModalOpen(true);
               }}
               className="bg-[#0066cc] text-white px-3 py-1.5 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-all flex items-center gap-1 shrink-0"
@@ -784,11 +882,12 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
                 >
                   Cancel
                 </button>
-                <button
+                 <button
                   type="submit"
-                  className="bg-[#0066cc] text-white px-5 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-colors"
+                  disabled={loading}
+                  className="bg-[#0066cc] text-white px-5 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 disabled:opacity-50 transition-colors"
                 >
-                  {editingCohort ? "Save Changes" : "Create Cohort"}
+                  {loading ? (editingCohort ? "Saving..." : "Creating...") : (editingCohort ? "Save Changes" : "Create Cohort")}
                 </button>
               </div>
             </form>
@@ -866,14 +965,31 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
                 </div>
 
                 {/* Students check list */}
-                <div className="space-y-2 flex flex-col flex-grow min-h-[300px]">
+                <div className="space-y-2 flex flex-col flex-grow min-h-[350px]">
                   {(() => {
-                    const eligibleStudents = students.filter(stu => 
+                    const filteredStudents = students.filter(stu => {
+                      if (!studentSearchQuery.trim()) return true;
+                      const q = studentSearchQuery.toLowerCase();
+                      return (stu.full_name || "").toLowerCase().includes(q) || (stu.email || "").toLowerCase().includes(q);
+                    });
+
+                    const eligibleStudents = filteredStudents.filter(stu => 
                       !enrollments.some(e => e.cohort_id === enrollForm.cohort_id && e.user_id === stu.id)
                     );
                     const isAllSelected = eligibleStudents.length > 0 && eligibleStudents.every(s => selectedStudentIds.includes(s.id));
                     return (
                       <>
+                        <div className="space-y-1.5 mb-1.5 shrink-0">
+                          <label className="block font-bold text-[#86868b]">Search Student</label>
+                          <input
+                            type="text"
+                            placeholder="🔍 Search student name or email..."
+                            value={studentSearchQuery}
+                            onChange={(e) => setStudentSearchQuery(e.target.value)}
+                            className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-semibold text-[#1d1d1f]"
+                          />
+                        </div>
+
                         <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 mb-1 shrink-0">
                           <label className="block font-bold text-[#86868b]">Student Directory</label>
                           <label className="flex items-center gap-1.5 text-xs text-[#0066cc] font-bold cursor-pointer select-none">
@@ -899,8 +1015,8 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
                         
                         {/* Scrollable checklist container */}
                         <div className="border border-[#d2d2d7] rounded-lg flex-1 overflow-y-auto p-2 bg-slate-50/30 divide-y divide-slate-100">
-                          {students.length > 0 ? (
-                            students.map(stu => {
+                          {filteredStudents.length > 0 ? (
+                            filteredStudents.map(stu => {
                               const isAlreadyEnrolled = enrollments.some(
                                 e => e.cohort_id === enrollForm.cohort_id && e.user_id === stu.id
                               );
@@ -937,7 +1053,7 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
                             })
                           ) : (
                             <div className="text-center py-10 text-[#86868b] italic">
-                              No students found in this institution.
+                              No students found.
                             </div>
                           )}
                         </div>
@@ -1122,11 +1238,12 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
                       >
                         Cancel
                       </button>
-                      <button
+                       <button
                         type="submit"
-                        className="bg-[#0066cc] text-white px-5 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-colors"
+                        disabled={loading}
+                        className="bg-[#0066cc] text-white px-5 py-2 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 disabled:opacity-50 transition-colors"
                       >
-                        Assign Course
+                        {loading ? "Assigning..." : "Assign Course"}
                       </button>
                     </div>
                   </>
@@ -1136,6 +1253,433 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
           </div>
         </>
       )}
+
+      {/* Roster detail drawer */}
+      {(() => {
+        if (!selectedStudent) return null;
+
+        const progressPercentage = selectedStudent.progress_percentage || 0;
+        const studentProjSubs = projectSubmissions.filter(sub => sub.student_id === selectedStudent.user_id);
+        const studentChalSubs = challengeSubmissions.filter(sub => sub.student_id === selectedStudent.user_id);
+        const studentQuizAttemptsList = quizAttempts.filter(att => att.student_id === selectedStudent.user_id);
+
+        const quizzes = activities.filter(a => a.activity_type_code === "quiz");
+        const projects = activities.filter(a => a.activity_type_code === "project");
+        const challenges = activities.filter(a => a.activity_type_code === "programming");
+
+        const studentQuizAttempts = quizzes.map(q => {
+          const attempt = studentQuizAttemptsList.find(att => att.activity_id === q.id);
+          return {
+            id: q.id,
+            title: q.title,
+            attempted: !!attempt,
+            passed: attempt ? (attempt.score >= (q.passing_score || 0)) : false,
+            score: attempt ? attempt.score : 0,
+            maxScore: q.max_score || 100,
+            submittedAt: attempt ? new Date(attempt.created_at || attempt.updated_at).toLocaleDateString() : "",
+            questions: (attempt as any)?.questions || []
+          };
+        });
+
+        const studentSyllabus = allCourses.map((course) => {
+          const courseLessons = drawerLessonsCache[course.id] || [];
+          return {
+            id: course.id,
+            title: course.title,
+            lessons: courseLessons.map(l => {
+              const progressEntry = activeStudentLessonsProgress.find(p => p.lesson_id === l.id);
+              return {
+                id: l.id,
+                title: l.title,
+                status: progressEntry?.status_code || "not_started"
+              };
+            })
+          };
+        });
+
+        return (
+          <div className="fixed inset-0 bg-[#0F172A]/40 backdrop-blur-sm z-50 flex justify-end animate-fadeIn" onClick={() => setSelectedStudent(null)}>
+            <div className="relative w-full max-w-3xl bg-white h-full shadow-2xl flex flex-col z-50 animate-slideOver overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              
+              {/* Drawer Header */}
+              <div className="p-6 border-b border-[#E2E8F0] flex justify-between items-start gap-4 bg-slate-50 shrink-0">
+                <div className="flex gap-3 items-center">
+                  <div className="w-12 h-12 rounded-2xl bg-[#0066cc] text-white flex items-center justify-center font-bold text-lg uppercase shadow-md border border-[#0066cc]/10">
+                    {(selectedStudent.student?.full_name || selectedStudent.student?.email || "S").substring(0, 2)}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[#0F172A]">{selectedStudent.student?.full_name || "Enrolled Student"}</h3>
+                    <p className="text-xs text-[#475569]">{selectedStudent.student?.email}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#0066cc]/10 text-[#0066cc] border border-[#0066cc]/20">
+                        {selectedStudent.cohort?.name || "No cohort"}
+                      </span>
+                      <span className="text-[10px] text-[#475569]">• Enrolled on {new Date(selectedStudent.created_at).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <button 
+                  onClick={() => setSelectedStudent(null)}
+                  className="p-1.5 hover:bg-slate-200 rounded-xl transition-all border border-transparent hover:border-[#E2E8F0] cursor-pointer"
+                >
+                  <X size={18} className="text-[#475569]" />
+                </button>
+              </div>
+
+              {/* Drawer Tab Navigation */}
+              <div className="flex border-b border-[#E2E8F0] px-6 bg-white shrink-0">
+                {(["overview", "syllabus", "quizzes", "projects", "challenges"] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setStudentDetailTab(tab)}
+                    className={`py-3 px-4 text-xs font-bold border-b-2 transition-all capitalize cursor-pointer ${
+                      studentDetailTab === tab 
+                        ? "border-[#0066cc] text-[#0066cc] font-bold" 
+                        : "border-transparent text-[#475569] hover:text-[#0F172A]"
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+
+              {/* Drawer Body Scroll */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                
+                {/* 1. OVERVIEW TAB */}
+                {studentDetailTab === "overview" && (
+                  <div className="space-y-6 animate-fadeIn">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div className="bg-[#0066cc]/5 border border-[#0066cc]/10 rounded-2xl p-4 text-center">
+                        <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Course Progress</span>
+                        <div className="text-xl font-black text-[#0066cc] mt-1">{progressPercentage}%</div>
+                        <div className="w-full bg-[#E2E8F0] h-1.5 rounded-full mt-2 overflow-hidden">
+                          <div className="bg-[#0066cc] h-full" style={{ width: `${progressPercentage}%` }}></div>
+                        </div>
+                      </div>
+
+                      <div className="bg-[#16A34A]/5 border border-[#16A34A]/10 rounded-2xl p-4 text-center">
+                        <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Quizzes Completed</span>
+                        <div className="text-xl font-black text-[#16A34A] mt-1">
+                          {studentQuizAttempts.filter(q => q.attempted).length} / {quizzes.length}
+                        </div>
+                        <span className="text-[8px] text-[#475569] block mt-2">Avg Score: {
+                          studentQuizAttempts.filter(q => q.attempted).length > 0 
+                            ? Math.round(studentQuizAttempts.reduce((acc, curr) => acc + curr.score, 0) / studentQuizAttempts.filter(q => q.attempted).length) 
+                            : 0
+                        }%</span>
+                      </div>
+
+                      <div className="bg-[#F59E0B]/5 border border-[#F59E0B]/10 rounded-2xl p-4 text-center">
+                        <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Projects Validated</span>
+                        <div className="text-xl font-black text-[#F59E0B] mt-1">
+                          {studentProjSubs.filter(p => p.review?.review_status === "approved").length} / {projects.length}
+                        </div>
+                        <span className="text-[8px] text-[#475569] block mt-2">{studentProjSubs.length} total uploads</span>
+                      </div>
+
+                      <div className="bg-cyan-50 border border-cyan-100 rounded-2xl p-4 text-center">
+                        <span className="text-[10px] font-bold text-[#475569] uppercase block tracking-wider">Coding Runs</span>
+                        <div className="text-xl font-black text-cyan-600 mt-1">
+                          {studentChalSubs.filter(c => c.submission_status_code === "accepted").length} / {challenges.length}
+                        </div>
+                        <span className="text-[8px] text-[#475569] block mt-2">{studentChalSubs.length} total submits</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 space-y-4 shadow-sm">
+                      <h4 className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5 pb-3 border-b border-[#E2E8F0]">
+                        <TrendingUp size={14} className="text-[#0066cc]" /> Core Curricular Activity Overview
+                      </h4>
+                      <div className="divide-y divide-[#E2E8F0] text-xs">
+                        <div className="py-3 flex justify-between">
+                          <span className="text-[#475569] font-medium">Platform Activity Status</span>
+                          <span className="font-bold text-[#16A34A] flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-[#16A34A] rounded-full animate-ping"></span> Active in Portal
+                          </span>
+                        </div>
+                        <div className="py-3 flex justify-between">
+                          <span className="text-[#475569] font-medium">Primary Program</span>
+                          <span className="font-bold text-[#0F172A]">
+                            {programs.find(p => p.id === selectedStudent.cohort?.program_id)?.title || "Standard Curriculum"}
+                          </span>
+                        </div>
+                        <div className="py-3 flex justify-between">
+                          <span className="text-[#475569] font-medium">Completed Syllabus Lessons</span>
+                          <span className="font-bold text-[#0F172A]">
+                            {activeStudentLessonsProgress.filter(p => p.status_code === "completed").length} Lessons Completed
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 2. SYLLABUS TAB */}
+                {studentDetailTab === "syllabus" && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {studentSyllabus.length === 0 ? (
+                      <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                        No syllabus lessons found for this program.
+                      </div>
+                    ) : (
+                      studentSyllabus.map(course => {
+                        const isExpanded = expandedCourseId === course.id;
+                        return (
+                          <div key={course.id} className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden">
+                            <div 
+                              onClick={() => setExpandedCourseId(isExpanded ? null : course.id)}
+                              className="p-5 flex justify-between items-center gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <ChevronDown className={`w-4 h-4 text-[#475569] transition-transform duration-200 ${isExpanded ? "transform rotate-180" : ""}`} />
+                                <h4 className="text-xs font-extrabold text-[#0F172A] hover:text-[#0066cc] transition-colors">{course.title}</h4>
+                              </div>
+                              <span className="text-[10px] font-bold text-[#0066cc] bg-[#0066cc]/10 px-2 py-0.5 rounded-full border border-[#0066cc]/20 shrink-0">Course</span>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="p-5 border-t border-[#E2E8F0] space-y-2.5 bg-slate-50/30">
+                                {course.lessons.map(lesson => (
+                                  <div key={lesson.id} className="flex justify-between items-center text-xs p-2.5 bg-white border border-[#E2E8F0] rounded-xl hover:bg-slate-50 transition-all shadow-sm">
+                                    <div className="flex items-center gap-2.5">
+                                      {lesson.status === "completed" ? (
+                                        <div className="w-5 h-5 rounded-full bg-[#16A34A]/10 text-[#16A34A] flex items-center justify-center font-bold text-[10px] border border-[#16A34A]/20">✓</div>
+                                      ) : lesson.status === "in_progress" ? (
+                                        <div className="w-5 h-5 rounded-full bg-[#F59E0B]/10 text-[#F59E0B] flex items-center justify-center font-bold text-[10px] border border-[#F59E0B]/20">⏳</div>
+                                      ) : (
+                                        <div className="w-5 h-5 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center font-bold text-[10px] border border-slate-200">•</div>
+                                      )}
+                                      <span className="font-semibold text-[#0F172A]">{lesson.title}</span>
+                                    </div>
+                                    <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-lg shrink-0 ${
+                                      lesson.status === "completed" 
+                                        ? "bg-[#16A34A]/10 text-[#16A34A]" 
+                                        : lesson.status === "in_progress"
+                                        ? "bg-[#F59E0B]/10 text-[#F59E0B]"
+                                        : "bg-slate-100 text-slate-500"
+                                    }`}>
+                                      {lesson.status.replace(/_/g, " ")}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
+                {/* 3. QUIZZES TAB */}
+                {studentDetailTab === "quizzes" && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {studentQuizAttempts.length === 0 ? (
+                      <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                        No quizzes assigned for this program.
+                      </div>
+                    ) : (
+                      studentQuizAttempts.map(attempt => {
+                        const isExpanded = expandedQuizId === attempt.id;
+                        return (
+                          <div key={attempt.id} className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden">
+                            <div 
+                              onClick={() => setExpandedQuizId(isExpanded ? null : attempt.id)}
+                              className="p-5 flex justify-between items-center gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <ChevronDown className={`w-4 h-4 text-[#475569] transition-transform duration-200 ${isExpanded ? "transform rotate-180" : ""}`} />
+                                <div>
+                                  <h4 className="text-xs font-bold text-[#0F172A] hover:text-[#0066cc] transition-colors">{attempt.title}</h4>
+                                  <p className="text-[9px] text-[#475569] mt-0.5">Attempted on {attempt.submittedAt}</p>
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-3 shrink-0">
+                                {attempt.attempted ? (
+                                  <>
+                                    <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase ${
+                                      attempt.passed 
+                                        ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20" 
+                                        : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                                    }`}>
+                                      {attempt.passed ? "Passed" : "Failed"}
+                                    </span>
+                                    <div className="text-xs font-black text-[#0F172A]">{attempt.score} / {attempt.maxScore} pts</div>
+                                  </>
+                                ) : (
+                                  <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-400 border uppercase">
+                                    Unattempted
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {isExpanded && attempt.attempted && (
+                              <div className="p-5 border-t border-[#E2E8F0] space-y-4 bg-slate-50/30">
+                                <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wide block">Auditing Answers:</span>
+                                <div className="space-y-3">
+                                  {attempt.questions.map((q: any, qIdx: number) => {
+                                    const isCorrect = q.selectedIndex === q.correctIndex;
+                                    return (
+                                      <div key={qIdx} className="p-3.5 bg-white border border-[#E2E8F0] rounded-xl text-xs space-y-2">
+                                        <div className="font-semibold text-[#0F172A] flex justify-between gap-4">
+                                          <span>Q{qIdx + 1}: {q.text}</span>
+                                          <span className={`font-black shrink-0 ${isCorrect ? "text-[#16A34A]" : "text-[#DC2626]"}`}>
+                                            {isCorrect ? `+${q.points} pts` : "0 pts"}
+                                          </span>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-1 gap-1.5 pt-1.5">
+                                          {q.options.map((opt: any, oIdx: number) => {
+                                            const isSelected = q.selectedIndex === oIdx;
+                                            const isAnsCorrect = q.correctIndex === oIdx;
+                                            
+                                            return (
+                                              <div 
+                                                key={oIdx} 
+                                                className={`p-2 rounded-lg border flex items-center gap-2 text-[11px] ${
+                                                  isAnsCorrect 
+                                                    ? "bg-[#16A34A]/10 border-[#16A34A]/30 text-[#16A34A] font-bold" 
+                                                    : isSelected 
+                                                    ? "bg-[#DC2626]/10 border-[#DC2626]/30 text-[#DC2626] font-semibold" 
+                                                    : "bg-white border-[#E2E8F0] text-[#475569]"
+                                                }`}
+                                              >
+                                                <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center text-[8px] font-black shrink-0 ${
+                                                  isAnsCorrect 
+                                                    ? "bg-[#16A34A] border-transparent text-white" 
+                                                    : isSelected 
+                                                    ? "bg-[#DC2626] border-transparent text-white" 
+                                                    : "border-slate-300"
+                                                }`}>
+                                                  {oIdx === 0 ? "A" : oIdx === 1 ? "B" : oIdx === 2 ? "C" : "D"}
+                                                </div>
+                                                <span>{opt.option_text || opt}</span>
+                                                {isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#16A34A]/20 px-1.5 py-0.5 rounded text-[#16A34A]">Correct Option</span>}
+                                                {isSelected && !isAnsCorrect && <span className="ml-auto text-[9px] font-bold uppercase bg-[#DC2626]/20 px-1.5 py-0.5 rounded text-[#DC2626]">Submitted Answer</span>}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
+                {/* 4. PROJECTS TAB */}
+                {studentDetailTab === "projects" && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {studentProjSubs.length === 0 ? (
+                      <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                        No project repository uploads submitted yet.
+                      </div>
+                    ) : (
+                      studentProjSubs.map(sub => {
+                        const isExpanded = expandedProjectId === sub.id;
+                        return (
+                          <div key={sub.id} className="bg-white border border-[#E2E8F0] rounded-2xl shadow-sm overflow-hidden text-xs">
+                            <div 
+                              onClick={() => setExpandedProjectId(isExpanded ? null : sub.id)}
+                              className="p-5 flex justify-between items-center gap-4 cursor-pointer hover:bg-slate-50/80 transition-colors select-none"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <ChevronDown className={`w-4 h-4 text-[#475569] transition-transform duration-200 ${isExpanded ? "transform rotate-180" : ""}`} />
+                                <div>
+                                  <h4 className="text-xs font-bold text-[#0F172A] hover:text-[#0066cc] transition-colors">{sub.project_title}</h4>
+                                  <p className="text-[9px] text-[#475569] mt-0.5">Submitted on {new Date(sub.submitted_at).toLocaleDateString()}</p>
+                                </div>
+                              </div>
+                              
+                              <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold border uppercase shrink-0 ${
+                                sub.review?.review_status === "approved"
+                                  ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+                                  : "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20"
+                              }`}>
+                                {sub.review?.review_status || "Pending Review"}
+                              </span>
+                            </div>
+
+                            {isExpanded && (
+                              <div className="p-5 border-t border-[#E2E8F0] space-y-3 bg-slate-50/30">
+                                <div>
+                                  <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wide block mb-1">GitHub Submission Link</span>
+                                  <a href={sub.github_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#0066cc] font-bold hover:underline flex items-center gap-1 w-fit">
+                                    {sub.github_url} <ExternalLink size={12} />
+                                  </a>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+
+                {/* 5. CHALLENGES TAB */}
+                {studentDetailTab === "challenges" && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {studentChalSubs.length === 0 ? (
+                      <div className="text-center py-10 border border-dashed border-[#E2E8F0] rounded-xl text-xs text-[#475569]">
+                        No programming challenge submissions found.
+                      </div>
+                    ) : (
+                      studentChalSubs.map(sub => (
+                        <div key={sub.id} className="bg-white border border-[#E2E8F0] rounded-xl p-4 shadow-sm flex flex-col gap-2 text-xs">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <h5 className="font-bold text-[#0F172A]">{sub.challenge_title}</h5>
+                              <p className="text-[9px] text-[#475569] mt-0.5">Submitted: {new Date(sub.submitted_at).toLocaleDateString()}</p>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              sub.submission_status_code === "accepted" ? "bg-[#16A34A]/10 text-[#16A34A]" : "bg-red-50 text-red-600"
+                            }`}>
+                              {sub.submission_status_code}
+                            </span>
+                          </div>
+                          {sub.result && (
+                            <div className="bg-slate-50 rounded-lg p-3 grid grid-cols-2 gap-2 text-[10px] border border-[#E2E8F0] mt-1">
+                              <div>
+                                <span className="text-[#475569] block">Score Awarded:</span>
+                                <strong className="text-[#0066cc] text-xs font-black">{sub.result.score} pts</strong>
+                              </div>
+                              <div>
+                                <span className="text-[#475569] block">Passed Tests:</span>
+                                <strong>{sub.result.passed_test_cases} / {sub.result.total_test_cases}</strong>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+              </div>
+
+              <div className="p-4 border-t border-[#E2E8F0] bg-slate-50 flex justify-end shrink-0">
+                <button 
+                  onClick={() => setSelectedStudent(null)}
+                  className="bg-white border border-[#E2E8F0] text-[#0F172A] hover:bg-slate-100 font-bold text-xs py-2 px-5 rounded-xl transition-all cursor-pointer"
+                >
+                  Close Progress Drawer
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

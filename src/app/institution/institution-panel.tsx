@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Building, 
   Users, 
@@ -17,6 +17,8 @@ import {
   Award,
   ChevronDown
 } from "lucide-react";
+import { getStudentDeliveryDataAction, listStudentLessonProgressAction } from "@/app/actions/delivery-actions";
+import { listLessonsForCourseAction } from "@/app/actions/academic-actions";
 
 interface InstitutionPanelProps {
   adminEmail: string;
@@ -55,6 +57,9 @@ export default function InstitutionPanel({
   // Roster and Drawer states
   const [selectedCohortId, setSelectedCohortId] = useState<string>(initialCohorts[0]?.id || "");
   const [selectedStudent, setSelectedStudent] = useState<any | null>(null);
+  const [activeStudentProgress, setActiveStudentProgress] = useState<any[]>([]);
+  const [activeStudentLessonsProgress, setActiveStudentLessonsProgress] = useState<any[]>([]);
+  const [drawerLessonsCache, setDrawerLessonsCache] = useState<Record<string, any[]>>({});
   const [studentDetailTab, setStudentDetailTab] = useState<"overview" | "syllabus" | "quizzes" | "projects" | "challenges">("overview");
   const [rosterSearch, setRosterSearch] = useState("");
 
@@ -86,14 +91,50 @@ export default function InstitutionPanel({
   const totalEnrolled = enrollments.length;
   const totalCohorts = cohorts.length;
   
-  // Calculate average progress deterministically for all enrolled students
+  // Fetch real progress data for selected student
+  useEffect(() => {
+    if (selectedStudent) {
+      const studentId = selectedStudent.user_id;
+      
+      // Load programs/courses progress
+      getStudentDeliveryDataAction(studentId).then(res => {
+        if (res.success && res.programs) {
+          setActiveStudentProgress(res.programs);
+        } else {
+          setActiveStudentProgress([]);
+        }
+      });
+
+      // Load individual lesson completions
+      listStudentLessonProgressAction(studentId).then(res => {
+        if (res.success && res.progressList) {
+          setActiveStudentLessonsProgress(res.progressList);
+        } else {
+          setActiveStudentLessonsProgress([]);
+        }
+      });
+    } else {
+      setActiveStudentProgress([]);
+      setActiveStudentLessonsProgress([]);
+    }
+  }, [selectedStudent]);
+
+  // Lazy load lessons for courses expanded inside the student detail drawer
+  useEffect(() => {
+    if (expandedCourseId && !drawerLessonsCache[expandedCourseId]) {
+      listLessonsForCourseAction(expandedCourseId).then(res => {
+        if (res.success && res.lessons) {
+          setDrawerLessonsCache(prev => ({ ...prev, [expandedCourseId]: res.lessons }));
+        }
+      });
+    }
+  }, [expandedCourseId, drawerLessonsCache]);
+
+  // Calculate average progress deterministically for all enrolled students (fallback if progress_percentage not set)
   const studentAverageProgress = enrollments.length > 0 
     ? Math.round(
         enrollments.reduce((acc, curr) => {
-          const seed = curr.student?.full_name || curr.student?.email || "student";
-          const charSum = seed.split("").reduce((sum: number, char: string) => sum + char.charCodeAt(0), 0);
-          const progress = 48 + (charSum % 49);
-          return acc + progress;
+          return acc + (curr.progress_percentage || 0);
         }, 0) / enrollments.length
       )
     : 0;
@@ -105,10 +146,8 @@ export default function InstitutionPanel({
   const renderStudentDetailDrawer = () => {
     if (!selectedStudent) return null;
 
-    // Calculate deterministic progress data for selected student
-    const seed = selectedStudent.student?.full_name || selectedStudent.student?.email || "student";
-    const charSum = seed.split("").reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0);
-    const progressPercentage = 48 + (charSum % 49);
+    // Real student progress percentage from enrollment/overall computed average
+    const progressPercentage = selectedStudent.progress_percentage || 0;
 
     // Filter submissions for this student
     const studentProjSubs = projectSubmissions.filter(sub => sub.student_id === selectedStudent.user_id);
@@ -119,26 +158,34 @@ export default function InstitutionPanel({
     const projects = activities.filter(a => a.activity_type_code === "project");
     const challenges = activities.filter(a => a.activity_type_code === "programming");
 
-    // Course completion maps
-    const studentSyllabus = coursesList.map((course) => {
-      const totalLessons = 5;
-      const completedCount = Math.round((progressPercentage / 100) * totalLessons);
-      
-      const mockLessons = [
-        { id: `c-${course.id}-l1`, title: "Overview and Architecture Design Patterns", duration: 45 },
-        { id: `c-${course.id}-l2`, title: "Interactive UI Building with Tailwind & HSL System", duration: 90 },
-        { id: `c-${course.id}-l3`, title: "Server Actions and Cross-Schema Queries", duration: 60 },
-        { id: `c-${course.id}-l4`, title: "Optimizing State Management and Memoization Hooks", duration: 75 },
-        { id: `c-${course.id}-l5`, title: "Comprehensive Security Protocols & Deployment Pipelines", duration: 120 },
-      ];
+    // Real student quiz attempts mapper
+    const studentQuizAttempts = quizzes.map(q => {
+      const attempt = studentQuizAttemptsList.find(att => att.activity_id === q.id);
+      return {
+        id: q.id,
+        title: q.title,
+        attempted: !!attempt,
+        passed: attempt ? (attempt.score >= (q.passing_score || 0)) : false,
+        score: attempt ? attempt.score : 0,
+        maxScore: q.max_score || 100,
+        submittedAt: attempt ? new Date(attempt.created_at || attempt.updated_at).toLocaleDateString() : ""
+      };
+    });
 
+    // Real syllabus lessons mapper using lazy loaded drawerLessonsCache and activeStudentLessonsProgress
+    const studentSyllabus = coursesList.map((course) => {
+      const courseLessons = drawerLessonsCache[course.id] || [];
       return {
         id: course.id,
         title: course.title,
-        lessons: mockLessons.map((l, lIdx) => ({
-          ...l,
-          status: lIdx < completedCount ? "completed" : lIdx === completedCount ? "in_progress" : "not_started"
-        }))
+        lessons: courseLessons.map(l => {
+          const progressEntry = activeStudentLessonsProgress.find(p => p.lesson_id === l.id);
+          return {
+            id: l.id,
+            title: l.title,
+            status: progressEntry?.status_code || "not_started"
+          };
+        })
       };
     });
 
@@ -260,7 +307,7 @@ export default function InstitutionPanel({
                     <div className="py-3 flex justify-between">
                       <span className="text-[#475569] font-medium">Completed Syllabus Lessons</span>
                       <span className="font-bold text-[#0F172A]">
-                        {Math.round(progressPercentage * 0.15)} Core Lessons
+                        {activeStudentLessonsProgress.filter(p => p.status_code === "completed").length} Core Lessons
                       </span>
                     </div>
                   </div>
@@ -688,10 +735,7 @@ export default function InstitutionPanel({
                         </thead>
                         <tbody className="divide-y divide-[#E2E8F0]">
                           {filteredEnrollments.map((enr: any) => {
-                            // Deterministic progress for list view
-                            const sSeed = enr.student?.full_name || enr.student?.email || "student";
-                            const sCharSum = sSeed.split("").reduce((sum: number, char: string) => sum + char.charCodeAt(0), 0);
-                            const progVal = 48 + (sCharSum % 49);
+                            const progVal = enr.progress_percentage || 0;
 
                             return (
                               <tr 

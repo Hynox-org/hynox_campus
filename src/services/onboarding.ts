@@ -24,13 +24,13 @@ export function parseCsv(csvContent: string) {
 
   // Read headers to map columns
   const headers = lines[0].split(",").map((h) => cleanVal(h).toLowerCase());
-  const nameIdx = headers.indexOf("name");
-  const emailIdx = headers.indexOf("email");
-  const roleIdx = headers.indexOf("role");
-  const instIdx = headers.indexOf("institution_id");
+  const nameIdx = headers.findIndex(h => h.includes("name"));
+  const emailIdx = headers.findIndex(h => h.includes("email") || h.includes("mail"));
+  const roleIdx = headers.findIndex(h => h.includes("role"));
+  const instIdx = headers.findIndex(h => h.includes("institution_id") || h.includes("institution"));
 
-  if (nameIdx === -1 || emailIdx === -1 || roleIdx === -1) {
-    throw new Error("CSV must contain 'name', 'email', and 'role' headers.");
+  if (nameIdx === -1 || emailIdx === -1) {
+    throw new Error("CSV must contain 'Name' and 'Email' headers.");
   }
 
   for (let i = 1; i < lines.length; i++) {
@@ -38,13 +38,13 @@ export function parseCsv(csvContent: string) {
     if (!line) continue;
 
     const columns = line.split(",").map((c) => cleanVal(c));
-    if (columns.length < 3) continue;
+    if (columns.length < 2) continue;
 
     result.push({
       name: columns[nameIdx],
       email: columns[emailIdx],
-      role: columns[roleIdx],
-      institution_id: instIdx !== -1 ? columns[instIdx] : undefined,
+      role: roleIdx !== -1 && columns[roleIdx] ? columns[roleIdx] : "student",
+      institution_id: instIdx !== -1 && columns[instIdx] ? columns[instIdx] : undefined,
     });
   }
 
@@ -79,11 +79,11 @@ export async function processCsvOnboarding(
     try {
       const email = row.email;
       const name = row.name;
-      const roleName = row.role.toLowerCase();
+      const roleName = (row.role || "student").toLowerCase();
       const institutionId = row.institution_id || selectedInstitutionId;
 
       if (!email || !name || !roleName || !institutionId) {
-        throw new Error("Missing required fields (name, email, role, or institution_id)");
+        throw new Error("Missing required fields (name, email, or institution_id)");
       }
 
       const roleId = rolesMap.get(roleName);
