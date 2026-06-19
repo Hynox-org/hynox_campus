@@ -123,7 +123,7 @@ export async function listTenantInstructors(tenantId: string) {
 // ----------------------------------------------------
 // Programs CRUD
 // ----------------------------------------------------
-export async function listPrograms(tenantId: string, filterActiveOnly = false) {
+export async function listPrograms(tenantId: string, userRoleOrFilterActiveOnly?: string | boolean) {
   const supabase = await createClient();
   let query = supabase
     .schema("academic")
@@ -136,9 +136,47 @@ export async function listPrograms(tenantId: string, filterActiveOnly = false) {
     .eq("tenant_id", tenantId)
     .is("deleted_at", null);
 
-  if (filterActiveOnly) {
-    // Only return program if active
-    const { data: activeStatus } = await supabase.schema("academic").from("statuses").select("id").eq("code", "active").single();
+  let role: string | undefined = undefined;
+  let activeOnly = false;
+
+  if (typeof userRoleOrFilterActiveOnly === "string") {
+    role = userRoleOrFilterActiveOnly;
+  } else if (typeof userRoleOrFilterActiveOnly === "boolean") {
+    activeOnly = userRoleOrFilterActiveOnly;
+  }
+
+  if (role) {
+    if (role === "super_admin") {
+      // Super admin sees all, no status filters
+    } else if (role === "teacher" || role === "trainer") {
+      // Teachers and trainers see active and draft programs
+      const { data: statuses } = await supabase
+        .schema("academic")
+        .from("statuses")
+        .select("id")
+        .in("code", ["active", "draft"]);
+      if (statuses && statuses.length > 0) {
+        query = query.in("status_id", statuses.map(s => s.id));
+      }
+    } else {
+      // Everyone else (students, institution_admin, etc.) sees only active programs
+      const { data: activeStatus } = await supabase
+        .schema("academic")
+        .from("statuses")
+        .select("id")
+        .eq("code", "active")
+        .single();
+      if (activeStatus) {
+        query = query.eq("status_id", activeStatus.id);
+      }
+    }
+  } else if (activeOnly) {
+    const { data: activeStatus } = await supabase
+      .schema("academic")
+      .from("statuses")
+      .select("id")
+      .eq("code", "active")
+      .single();
     if (activeStatus) {
       query = query.eq("status_id", activeStatus.id);
     }

@@ -198,7 +198,7 @@ export async function listProgramsAction(tenantId: string) {
   try {
     const user = await getCurrentUser();
     if (!user) throw new Error("Unauthorized.");
-    const data = await academicService.listPrograms(tenantId);
+    const data = await academicService.listPrograms(tenantId, user.primaryRole);
     return { success: true, programs: data };
   } catch (error: any) {
     return { error: error.message || "Failed to list programs." };

@@ -1,8 +1,8 @@
 import { getCurrentUser } from "@/services/auth";
-import { signOutAction } from "@/app/actions/auth-actions";
 import { getStudentDeliveryData } from "@/services/delivery";
 import { redirect } from "next/navigation";
-import { Terminal, LogOut } from "lucide-react";
+import { Terminal } from "lucide-react";
+import SignOutButton from "@/components/sign-out-button";
 import StudentConsole from "./student-console";
 
 export const dynamic = "force-dynamic";
@@ -46,15 +46,7 @@ export default async function StudentPage() {
               {primaryRole}
             </span>
             
-            <form action={signOutAction}>
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-3 py-1.5 rounded-lg hover:bg-[#DC2626] hover:text-white transition-all text-xs font-semibold"
-              >
-                <LogOut size={13} />
-                Sign Out
-              </button>
-            </form>
+            <SignOutButton />
           </div>
         </div>
       </header>

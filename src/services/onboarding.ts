@@ -326,7 +326,7 @@ export async function listOnboardingInvitations() {
 
   return (data || []).map((inv: any) => ({
     ...inv,
-    institution_name: instMap.get(inv.tenant_id) || "Unknown Institution",
+    institution_name: inv.tenant_id ? (instMap.get(inv.tenant_id) || "Unknown Institution") : "Global / Platform",
   }));
 }
 
@@ -397,17 +397,23 @@ export async function regenerateInvitation(invitationId: string, invitedByUserId
     trainer_onboarding: "Teacher / Trainer",
     institution_admin_invite: "Institution Admin",
     mentor_invite: "Mentor",
+    super_admin_invite: "Super Administrator",
   };
   const roleLabel = roleNameMap[invitation.invitation_type] || "Member";
 
   // Fetch institution name
-  const { data: inst } = await supabase
-    .schema("institution")
-    .from("institutions")
-    .select("name")
-    .eq("id", invitation.tenant_id)
-    .maybeSingle();
-  const institutionName = inst?.name || "Hynox Campus";
+  let institutionName = "Hynox Campus";
+  if (invitation.tenant_id) {
+    const { data: inst } = await supabase
+      .schema("institution")
+      .from("institutions")
+      .select("name")
+      .eq("id", invitation.tenant_id)
+      .maybeSingle();
+    if (inst) {
+      institutionName = inst.name;
+    }
+  }
 
   let mailStatus = "sent";
   try {
@@ -563,6 +569,149 @@ export async function onboardSingleUser(params: {
     let mailStatus = "sent";
     try {
       await sendOnboardingEmail(email, link, name, roleLabel, institutionName);
+    } catch (mailErr: any) {
+      console.error("Onboarding email dispatch failed:", mailErr);
+      mailStatus = "failed";
+    }
+
+    // Update dispatch status in database
+    await supabase
+      .schema("core")
+      .from("user_invitations")
+      .update({ status: mailStatus })
+      .eq("token", token);
+
+    return { email, status: "success", link };
+  } catch (err: any) {
+    return {
+      email: email || "unknown",
+      status: "error",
+      error: err.message,
+    };
+  }
+}
+
+export async function onboardSuperAdmin(params: {
+  email: string;
+  name: string;
+  invitedByUserId: string;
+}): Promise<OnboardingResult> {
+  const supabase = await createClient();
+  const { email, name, invitedByUserId } = params;
+
+  try {
+    if (!email || !name) {
+      throw new Error("Missing required fields (name, email)");
+    }
+
+    // Fetch all roles to map name to ID
+    const { data: rolesList } = await supabase
+      .schema("core")
+      .from("roles")
+      .select("id, name");
+
+    const rolesMap = new Map(rolesList?.map((r) => [r.name.toLowerCase(), r.id]));
+    const roleId = rolesMap.get("super_admin");
+    if (!roleId) {
+      throw new Error("Super Admin role not found in database.");
+    }
+
+    // Check if user already exists
+    const { data: existingUser } = await supabase
+      .schema("core")
+      .from("users")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+
+    let userId = existingUser?.id;
+
+    if (!userId) {
+      // Create pre-provisioned user in core.users
+      const { data: newUser, error: userError } = await supabase
+        .schema("core")
+        .from("users")
+        .insert({
+          full_name: name,
+          email: email,
+          tenant_id: null,
+          status: "invited",
+          onboarding_source: "admin_created",
+        })
+        .select("id")
+        .single();
+
+      if (userError) throw userError;
+      userId = newUser.id;
+
+      // Assign core.user_roles role map
+      const { error: roleLinkError } = await supabase
+        .schema("core")
+        .from("user_roles")
+        .insert({
+          user_id: userId,
+          role_id: roleId,
+        });
+
+      if (roleLinkError) throw roleLinkError;
+    } else {
+      // Check if user already has the super_admin role
+      const { data: existingRoleLink } = await supabase
+        .schema("core")
+        .from("user_roles")
+        .select("user_id")
+        .eq("user_id", userId)
+        .eq("role_id", roleId)
+        .maybeSingle();
+
+      if (!existingRoleLink) {
+        const { error: roleLinkError } = await supabase
+          .schema("core")
+          .from("user_roles")
+          .insert({
+            user_id: userId,
+            role_id: roleId,
+          });
+        if (roleLinkError) throw roleLinkError;
+      }
+
+      // We also set tenant_id to null since they are super_admin now
+      await supabase
+        .schema("core")
+        .from("users")
+        .update({ tenant_id: null })
+        .eq("id", userId);
+    }
+
+    // Determine invitation type
+    const invitationType = "super_admin_invite";
+
+    // Create onboarding invitation token record
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days expiry
+    const token = crypto.randomUUID();
+
+    const { error: inviteError } = await supabase
+      .schema("core")
+      .from("user_invitations")
+      .insert({
+        user_id: userId,
+        tenant_id: null,
+        token: token,
+        invited_by: invitedByUserId,
+        expires_at: expiresAt,
+        status: "created",
+        invitation_type: invitationType,
+      });
+
+    if (inviteError) throw inviteError;
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const link = `${appUrl}/onboarding/verify?token=${token}&email=${encodeURIComponent(email)}`;
+
+    // Send automated email notification
+    let mailStatus = "sent";
+    try {
+      await sendOnboardingEmail(email, link, name, "Super Administrator", "Hynox Campus");
     } catch (mailErr: any) {
       console.error("Onboarding email dispatch failed:", mailErr);
       mailStatus = "failed";

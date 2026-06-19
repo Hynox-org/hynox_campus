@@ -574,9 +574,16 @@ export async function getStudentDeliveryData(userId: string) {
     const { data: progData } = await supabase
       .schema("academic")
       .from("programs")
-      .select("id, title, description")
+      .select(`
+        id, 
+        title, 
+        description,
+        status:status_id (
+          code
+        )
+      `)
       .in("id", programIds);
-    programs = progData || [];
+    programs = (progData || []).filter((p: any) => p.status?.code === "active");
   }
 
   // Group cohorts and programs
@@ -594,6 +601,7 @@ export async function getStudentDeliveryData(userId: string) {
         id: program.id,
         title: program.title,
         description: program.description,
+        status_code: program.status?.code || "active",
         cohorts: [],
         courses: []
       };

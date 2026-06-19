@@ -655,9 +655,20 @@ export default function InstitutionPanel({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {initialPrograms.map(prog => (
                   <div key={prog.id} className="border border-[#E2E8F0] rounded-xl p-4 bg-slate-50/50 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <BookOpen size={16} className="text-[#2563EB]" />
-                      <h4 className="font-bold text-xs text-[#0F172A]">{prog.title}</h4>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <BookOpen size={16} className="text-[#2563EB]" />
+                        <h4 className="font-bold text-xs text-[#0F172A]">{prog.title}</h4>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border capitalize ${
+                        prog.status?.code === "active"
+                          ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+                          : prog.status?.code === "suspended"
+                          ? "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20"
+                          : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                      }`}>
+                        {prog.status?.code || "active"}
+                      </span>
                     </div>
                     <p className="text-[10px] text-[#475569] line-clamp-2">{prog.description || "No description provided."}</p>
                     <div className="flex items-center gap-2 pt-2 text-[9px] font-bold">

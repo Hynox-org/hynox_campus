@@ -13,9 +13,7 @@ export default async function AcademicProgramsPage() {
 
   const { primaryRole, tenantId } = userDetails;
   
-  // Fetch programs for tenant
-  const isStudent = primaryRole === "student";
-  const programs = await listPrograms(tenantId || "", isStudent);
+  const programs = await listPrograms(tenantId || "", primaryRole);
 
   // Fetch lookup lists for statuses and visibility
   const lookups = await getAcademicLookups();

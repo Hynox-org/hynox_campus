@@ -8,13 +8,15 @@ import {
   listTeacherInstitutions,
   listAllTeachers,
   mapTeacherToTenant,
-  unmapTeacherFromTenant
+  unmapTeacherFromTenant,
+  updateInstitutionStatus
 } from "@/services/institution";
 import { 
   processCsvOnboarding,
   listOnboardingInvitations,
   regenerateInvitation,
-  onboardSingleUser
+  onboardSingleUser,
+  onboardSuperAdmin
 } from "@/services/onboarding";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/utils/supabase/server";
@@ -293,3 +295,47 @@ export async function getTeacherInstitutionDetailsAction(userId: string) {
     return { error: error.message || "Failed to retrieve teacher institution details." };
   }
 }
+
+export async function updateInstitutionStatusAction(institutionId: string, status: string) {
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied. Only super administrators can update institution status." };
+    }
+
+    await updateInstitutionStatus(institutionId, status);
+    revalidatePath("/admin");
+    return { success: true };
+  } catch (error: any) {
+    return { error: error.message || "Failed to update institution status." };
+  }
+}
+
+export async function onboardSuperAdminAction(params: {
+  email: string;
+  name: string;
+}) {
+  const { email, name } = params;
+  if (!email || !name) {
+    return { error: "Full Name and Email are required." };
+  }
+
+  try {
+    const userDetails = await getCurrentUser();
+    if (!userDetails || userDetails.primaryRole !== "super_admin") {
+      return { error: "Access denied." };
+    }
+
+    const result = await onboardSuperAdmin({
+      email,
+      name,
+      invitedByUserId: userDetails.user.id,
+    });
+
+    revalidatePath("/admin");
+    return { success: true, result };
+  } catch (error: any) {
+    return { error: error.message || "Failed to onboard super admin." };
+  }
+}
+

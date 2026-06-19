@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local Scratch & Reference docs
+/scratch/
+*.docx
+AGENTS.md
+CLAUDE.md

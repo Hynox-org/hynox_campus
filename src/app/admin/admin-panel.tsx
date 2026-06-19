@@ -12,7 +12,9 @@ import {
   listAllTeachersAction,
   mapTeacherToInstitutionAction,
   unmapTeacherFromInstitutionAction,
-  getTeacherInstitutionDetailsAction
+  getTeacherInstitutionDetailsAction,
+  updateInstitutionStatusAction,
+  onboardSuperAdminAction
 } from "@/app/actions/institution-actions";
 import { 
   createProgramAction,
@@ -101,7 +103,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [activeParentTab, setActiveParentTab] = useState<"institutions" | "onboarding" | "library" | "programs" | "learning_manager">("institutions");
   const [selectedUserDetail, setSelectedUserDetail] = useState<any | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"institutions" | "add_institution" | "explorer" | "csv" | "onboarding" | "academics" | "library" | "programs" | "examine_programs" | "cohorts" | "enrollments" | "course_assignments" | "learning_manager" | "create_activity" | "view_activities" | "teacher_mapping" | "program_student_progress">("institutions");
+  const [activeTab, setActiveTab] = useState<"institutions" | "add_institution" | "explorer" | "csv" | "onboarding" | "academics" | "library" | "programs" | "examine_programs" | "cohorts" | "enrollments" | "course_assignments" | "learning_manager" | "create_activity" | "view_activities" | "teacher_mapping" | "program_student_progress" | "super_admin_invite">("institutions");
   const [institutions, setInstitutions] = useState<any[]>(initialInstitutions);
   const [invitations, setInvitations] = useState<any[]>(initialInvitations);
   const [inviteSearch, setInviteSearch] = useState("");
@@ -112,6 +114,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [progSelectedInstId, setProgSelectedInstId] = useState("");
   const [progSelectedProgram, setProgSelectedProgram] = useState<any | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [openProgDropdownId, setOpenProgDropdownId] = useState<string | null>(null);
 
   // Institution Explorer states
   const [explorerSelectedId, setExplorerSelectedId] = useState("");
@@ -257,6 +260,10 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
     });
   }, [invitations, inviteSearch, inviteFilter, inviteInstitutionFilter, inviteRoleFilter, inviteDateFilter]);
 
+  const superAdminInvitations = React.useMemo(() => {
+    return invitations.filter((inv) => inv.invitation_type === "super_admin_invite");
+  }, [invitations]);
+
   const computedExplorerStats = React.useMemo(() => {
     let admins = 0;
     let teachers = 0;
@@ -328,6 +335,10 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
   const [singleEmail, setSingleEmail] = useState("");
   const [singleRole, setSingleRole] = useState("student");
   const [uploadedFileName, setUploadedFileName] = useState("");
+  
+  // Super-admin onboarding form states
+  const [superAdminName, setSuperAdminName] = useState("");
+  const [superAdminEmail, setSuperAdminEmail] = useState("");
 
   // Academic Builder states
   const [acadSelectedInstId, setAcadSelectedInstId] = useState("");
@@ -978,6 +989,42 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
     setLoading(false);
   };
 
+  const handleSuperAdminOnboard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    clearStatuses();
+
+    if (!superAdminName.trim() || !superAdminEmail.trim()) {
+      setError("Full Name and Email are required.");
+      setLoading(false);
+      return;
+    }
+
+    const res = await onboardSuperAdminAction({
+      email: superAdminEmail,
+      name: superAdminName,
+    });
+
+    if (res.error) {
+      setError(res.error);
+    } else if (res.result) {
+      setLinks([res.result]);
+      if (res.result.status === "success") {
+        setSuccess(`Successfully invited Super Admin '${superAdminEmail}'!`);
+        setSuperAdminName("");
+        setSuperAdminEmail("");
+        
+        const freshInvites = await listInvitationsAction();
+        if (freshInvites.invitations) {
+          setInvitations(freshInvites.invitations);
+        }
+      } else {
+        setError(res.result.error || "Failed to generate invitation.");
+      }
+    }
+    setLoading(false);
+  };
+
   const downloadTemplateExcel = () => {
     if (!selectedInstId) {
       setError("Please select a default institution first.");
@@ -1552,6 +1599,16 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                 >
                   Teacher Mapping
                 </button>
+                <button
+                  onClick={() => setActiveTab("super_admin_invite")}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                    activeTab === "super_admin_invite"
+                      ? "bg-[#0066cc]/10 text-[#0066cc]"
+                      : "text-[#86868b] hover:text-[#1d1d1f] hover:bg-slate-50"
+                  }`}
+                >
+                  Super Admin Onboarding
+                </button>
               </>
             )}
 
@@ -1847,15 +1904,34 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                             <td className="px-6 py-3 text-[#86868b] font-mono">{inst.institution_code}</td>
                             <td className="px-6 py-3 text-[#86868b] font-medium">{inst.institution_type}</td>
                             <td className="px-6 py-3 text-[#86868b]">{inst.slug}</td>
-                            <td className="px-6 py-3 text-right">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                inst.status === "active"
-                                  ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
-                                  : "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20"
-                              }`}>
-                                {inst.status}
-                              </span>
-                            </td>
+                             <td className="px-6 py-3 text-right">
+                               <select
+                                 value={inst.status}
+                                 onChange={async (e) => {
+                                   const newStatus = e.target.value;
+                                   if (confirm(`Are you sure you want to change the status of ${inst.name} to ${newStatus}?`)) {
+                                     const res = await updateInstitutionStatusAction(inst.id, newStatus);
+                                     if (res.error) {
+                                       alert(res.error);
+                                     } else {
+                                       setInstitutions(prev => prev.map(i => i.id === inst.id ? { ...i, status: newStatus } : i));
+                                     }
+                                   }
+                                 }}
+                                 className={`px-2 py-1 rounded-lg text-[10px] font-bold border focus:outline-none cursor-pointer ${
+                                   inst.status === "active"
+                                     ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20"
+                                     : inst.status === "onboarding"
+                                     ? "bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20"
+                                     : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
+                                 }`}
+                               >
+                                 <option value="active">Active</option>
+                                 <option value="onboarding">Onboarding</option>
+                                 <option value="inactive">Inactive</option>
+                                 <option value="suspended">Suspended</option>
+                               </select>
+                             </td>
                           </tr>
                         ))
                       ) : (
@@ -2064,7 +2140,6 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                           <option value="student">Student</option>
                           <option value="teacher">Teacher / Trainer</option>
                           <option value="institution_admin">Institution Administrator</option>
-                          <option value="mentor">Mentor / Advisor</option>
                         </select>
                       </div>
 
@@ -2242,6 +2317,233 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
           )}
 
+          {activeTab === "super_admin_invite" && (
+            <div className="space-y-6">
+              <div className="bg-white border border-[#d2d2d7] rounded-xl p-6 shadow-sm">
+                <div className="flex items-center justify-between pb-4 mb-5 border-b border-[#d2d2d7]">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-[#86868b] flex items-center gap-1.5">
+                    <ShieldCheck size={15} /> Super Admin Onboarding
+                  </h3>
+                </div>
+
+                <form onSubmit={handleSuperAdminOnboard} className="space-y-4 text-xs">
+                  <p className="text-xs text-[#86868b] mb-2 leading-relaxed">
+                    Create a new Super Administrator account. Fill in their details below. We will generate an onboarding token and link so they can log in directly and gain full administrative privileges.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block font-semibold mb-1 text-[#86868b]">Full Name *</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Administrator Name"
+                        value={superAdminName}
+                        onChange={(e) => setSuperAdminName(e.target.value)}
+                        className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold mb-1 text-[#86868b]">Email Address *</label>
+                      <input
+                        type="email"
+                        placeholder="e.g. admin@hynox.co"
+                        value={superAdminEmail}
+                        onChange={(e) => setSuperAdminEmail(e.target.value)}
+                        className="w-full bg-white border border-[#d2d2d7] rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <button
+                      type="submit"
+                      disabled={loading || !superAdminName.trim() || !superAdminEmail.trim()}
+                      className="bg-[#0066cc] text-white px-4 py-2.5 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-all disabled:opacity-50"
+                    >
+                      {loading ? "Generating Link..." : "Generate & Send Onboarding Link"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Onboarding Links Generation Display */}
+              {links.length > 0 && (
+                <div className="bg-white border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm">
+                  <div className="bg-slate-50 px-6 py-3 border-b border-[#d2d2d7]">
+                    <h4 className="text-xs font-bold text-[#1d1d1f]">GENERATED ONBOARDING LINKS</h4>
+                  </div>
+                  
+                  <div className="divide-y divide-[#d2d2d7]">
+                    {links.map((link, idx) => (
+                      <div key={idx} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-slate-50/20 text-xs">
+                        <div className="flex flex-col gap-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-[#1d1d1f] truncate">{link.email}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                              link.status === "success" 
+                                ? "bg-[#16A34A]/10 text-[#16A34A]" 
+                                : "bg-[#DC2626]/10 text-[#DC2626]"
+                            }`}>
+                              {link.status === "success" ? "Success" : "Failed"}
+                            </span>
+                          </div>
+                          {link.error && <p className="text-[#DC2626] text-[10px]">{link.error}</p>}
+                          {link.link && (
+                            <span className="text-[#86868b] font-mono text-[10px] select-all truncate block">
+                              {link.link}
+                            </span>
+                          )}
+                        </div>
+
+                        {link.link && (
+                          <button
+                            onClick={() => copyToClipboard(link.link)}
+                            className="flex items-center justify-center gap-1.5 border border-[#d2d2d7] bg-white px-2.5 py-1.5 rounded-lg hover:bg-slate-50 transition-all font-semibold shrink-0 text-[10px]"
+                          >
+                            <Copy size={12} />
+                            Copy Link
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Existing Super Admin Invitations */}
+              <div className="bg-white border border-[#d2d2d7] rounded-xl shadow-sm overflow-hidden flex flex-col">
+                <div className="bg-slate-50/50 px-6 py-3.5 border-b border-[#d2d2d7]">
+                  <h4 className="text-xs font-bold text-[#1d1d1f] uppercase tracking-wider">Super Admin Invitations Status</h4>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50/30 border-b border-[#d2d2d7] font-bold text-[#86868b]">
+                        <th className="px-6 py-3">Administrator Name</th>
+                        <th className="px-6 py-3">Email Address</th>
+                        <th className="px-6 py-3">Created / Expires At</th>
+                        <th className="px-6 py-3">Status</th>
+                        <th className="px-6 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#d2d2d7]">
+                      {superAdminInvitations.length > 0 ? (
+                        superAdminInvitations.map((inv) => {
+                          const now = new Date();
+                          const isExpired = inv.status === "expired" || (["pending", "created", "sent"].includes(inv.status) && new Date(inv.expires_at) < now);
+                          const appUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+                          const fullInviteLink = `${appUrl}/onboarding/verify?token=${inv.token}&email=${encodeURIComponent(inv.user?.email || "")}`;
+
+                          let statusBadge = (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#0066cc]/10 text-[#0066cc] border-[#0066cc]/20 flex items-center gap-1 w-fit">
+                              <Clock size={10} /> Pending
+                            </span>
+                          );
+
+                          if (inv.status === "accepted") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20 flex items-center gap-1 w-fit">
+                                <CheckCircle size={10} /> Accepted
+                              </span>
+                            );
+                          } else if (isExpired) {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#F59E0B]/10 text-[#F59E0B] border-[#F59E0B]/20 flex items-center gap-1 w-fit">
+                                <XCircle size={10} /> Expired
+                              </span>
+                            );
+                          } else if (inv.status === "failed") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20 flex items-center gap-1 w-fit">
+                                <XCircle size={10} /> Mail Failed
+                              </span>
+                            );
+                          } else if (inv.status === "revoked") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-slate-500/10 text-slate-500 border-slate-500/20 flex items-center gap-1 w-fit">
+                                <Ban size={10} /> Revoked
+                              </span>
+                            );
+                          } else if (inv.status === "created") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#06B6D4]/10 text-[#06B6D4] border-[#06B6D4]/20 flex items-center gap-1 w-fit">
+                                <Clock size={10} /> Mail Pending
+                              </span>
+                            );
+                          } else if (inv.status === "sent") {
+                            statusBadge = (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-500/10 text-emerald-600 border-emerald-500/20 flex items-center gap-1 w-fit">
+                                <CheckCircle size={10} /> Mail Sent
+                              </span>
+                            );
+                          }
+
+                          return (
+                            <tr key={inv.id} className="hover:bg-slate-50/20 transition-colors">
+                              <td className="px-6 py-4 font-semibold text-[#1d1d1f]">
+                                {inv.user?.full_name || "N/A"}
+                              </td>
+                              <td className="px-6 py-4 font-mono text-[11px] text-[#86868b]">
+                                {inv.user?.email}
+                              </td>
+                              <td className="px-6 py-4 text-[#86868b] leading-normal">
+                                <div className="font-medium text-[11px]">
+                                  Sent: {new Date(inv.created_at).toLocaleDateString()}
+                                </div>
+                                <div className={`text-[10px] ${isExpired ? "text-[#DC2626]" : "text-[#86868b]"}`}>
+                                  {isExpired ? "Expired" : `Expires: ${new Date(inv.expires_at).toLocaleDateString()}`}
+                                </div>
+                              </td>
+                              <td className="px-6 py-4">{statusBadge}</td>
+                              <td className="px-6 py-4 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  {!isExpired && inv.status !== "accepted" && inv.status !== "revoked" && (
+                                    <button
+                                      onClick={() => copyToClipboard(fullInviteLink)}
+                                      className="flex items-center gap-1 border border-[#d2d2d7] bg-white px-2.5 py-1.5 rounded-lg hover:bg-slate-50 transition-all font-semibold text-[10px]"
+                                    >
+                                      <Copy size={11} /> Copy Link
+                                    </button>
+                                  )}
+                                  
+                                  {inv.status !== "accepted" && (
+                                    <button
+                                      disabled={regeneratingId === inv.id}
+                                      onClick={() => handleRegenerateInvite(inv.id)}
+                                      className="flex items-center gap-1.5 bg-[#0066cc] text-white px-2.5 py-1.5 rounded-lg hover:bg-[#0066cc]/95 transition-all font-semibold text-[10px] disabled:opacity-50"
+                                    >
+                                      {regeneratingId === inv.id ? (
+                                        <RefreshCw size={11} className="animate-spin" />
+                                      ) : (
+                                        <RefreshCw size={11} />
+                                      )}
+                                      Regenerate Token
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-6 py-8 text-center text-[#86868b] font-medium">
+                            No Super Admin invitations found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+
           {/* TAB 4: ONBOARDING STATUS DASHBOARD */}
           {activeTab === "onboarding" && (
             <div className="space-y-6">
@@ -2344,7 +2646,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                         <option value="student_onboarding">Student</option>
                         <option value="trainer_onboarding">Teacher / Trainer</option>
                         <option value="institution_admin_invite">Institution Admin</option>
-                        <option value="mentor_invite">Mentor</option>
+                        <option value="super_admin_invite">Super Admin</option>
                       </select>
                     </div>
 
@@ -2407,7 +2709,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                             student_onboarding: "Student",
                             trainer_onboarding: "Teacher",
                             institution_admin_invite: "Institution Admin",
-                            mentor_invite: "Mentor",
+                            super_admin_invite: "Super Administrator",
                           };
                           const roleLabel = roleNameMap[inv.invitation_type] || "Member";
 
@@ -2955,23 +3257,63 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                                 >
                                   <Edit size={12} />
                                 </button>
-                                <button
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (confirm("Are you sure you want to delete this program?")) {
-                                      const res = await deleteProgramAction(prog.id);
-                                      if (res.error) setError(res.error);
-                                      else {
-                                        setSuccess("Program deleted successfully!");
-                                        if (acadSelectedProgram?.id === prog.id) setAcadSelectedProgram(null);
-                                        await refreshPrograms();
-                                      }
-                                    }
-                                  }}
-                                  className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-700"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
+                                <div className="relative inline-block text-left">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setOpenProgDropdownId(openProgDropdownId === prog.id ? null : prog.id);
+                                    }}
+                                    className={`px-2 py-0.5 rounded-full text-[9px] font-bold border flex items-center gap-1 cursor-pointer transition-all ${
+                                      acadLookups.statuses.find((s: any) => s.id === prog.status_id)?.code === "active"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/80"
+                                        : acadLookups.statuses.find((s: any) => s.id === prog.status_id)?.code === "draft"
+                                        ? "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200/80"
+                                        : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100/80"
+                                    }`}
+                                  >
+                                    {acadLookups.statuses.find((s: any) => s.id === prog.status_id)?.code.toUpperCase() || "DRAFT"}
+                                    <ChevronDown size={10} className="opacity-70" />
+                                  </button>
+
+                                  {openProgDropdownId === prog.id && (
+                                    <>
+                                      <div className="fixed inset-0 z-10" onClick={(e) => { e.stopPropagation(); setOpenProgDropdownId(null); }}></div>
+                                      <div className="absolute right-0 mt-1.5 w-28 bg-white border border-slate-200 rounded-xl shadow-lg z-20 py-1 font-semibold text-[9px] overflow-hidden text-slate-700">
+                                        {acadLookups.statuses
+                                          .filter((s: any) => ["active", "draft", "disabled"].includes(s.code))
+                                          .map((s: any) => (
+                                            <button
+                                              key={s.id}
+                                              type="button"
+                                              onClick={async (e) => {
+                                                e.stopPropagation();
+                                                setOpenProgDropdownId(null);
+                                                const res = await updateProgramAction(prog.id, {
+                                                  title: prog.title,
+                                                  slug: prog.slug,
+                                                  description: prog.description || "",
+                                                  status_id: s.id,
+                                                  visibility_type_id: prog.visibility_type_id
+                                                });
+                                                if (res.error) {
+                                                  setError(res.error);
+                                                } else {
+                                                  setSuccess("Program status updated successfully!");
+                                                  await refreshPrograms();
+                                                }
+                                              }}
+                                              className="w-full text-left px-2.5 py-1.5 hover:bg-slate-50 transition-all flex items-center gap-1.5"
+                                            >
+                                              <span className={`w-1 h-1 rounded-full ${
+                                                s.code === "active" ? "bg-emerald-500" : s.code === "draft" ? "bg-slate-400" : "bg-red-500"
+                                              }`}></span>
+                                              {s.code.toUpperCase()}
+                                            </button>
+                                          ))}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           ))

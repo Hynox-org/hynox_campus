@@ -18,7 +18,8 @@ import {
   createLessonResourceAction,
   deleteLessonResourceAction,
   updateCourseAction,
-  getAcademicLookupsAction
+  getAcademicLookupsAction,
+  updateProgramAction
 } from "@/app/actions/academic-actions";
 import { listCourseTemplatesAction, instantiateCourseTemplateAction } from "@/app/actions/library-actions";
 import { 
@@ -72,6 +73,8 @@ export default function ProgramManager({
   const [lessonTypes, setLessonTypes] = useState<any[]>([]);
   const [defaultStatusId, setDefaultStatusId] = useState("");
   const [defaultLessonTypeId, setDefaultLessonTypeId] = useState("");
+  const [statuses, setStatuses] = useState<any[]>([]);
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
   // Modals / forms for Course Editing
   const [editingCourse, setEditingCourse] = useState<any | null>(null);
@@ -117,6 +120,7 @@ export default function ProgramManager({
       const lRes = await getAcademicLookupsAction();
       if (lRes.success && lRes.lookups) {
         setLessonTypes(lRes.lookups.lessonTypes);
+        setStatuses(lRes.lookups.statuses);
         const textType = lRes.lookups.lessonTypes.find((t: any) => t.code === "text") || lRes.lookups.lessonTypes[0];
         if (textType) setDefaultLessonTypeId(textType.id);
         const activeStatus = lRes.lookups.statuses.find((s: any) => s.code === "active") || lRes.lookups.statuses[0];
@@ -478,29 +482,71 @@ export default function ProgramManager({
                             <span>Registered: {startedDate.toLocaleDateString()}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20">
-                            Active
-                          </span>
+                        <td className="px-6 py-4 overflow-visible relative">
+                          <div className="relative inline-block text-left">
+                            <button
+                              onClick={() => setOpenDropdownId(openDropdownId === prog.id ? null : prog.id)}
+                              className={`px-3 py-1.5 rounded-full text-[10px] font-bold border flex items-center gap-1.5 cursor-pointer shadow-xs transition-all ${
+                                statuses.find((s: any) => s.id === prog.status_id)?.code === "active"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/80"
+                                  : statuses.find((s: any) => s.id === prog.status_id)?.code === "draft"
+                                  ? "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200/80"
+                                  : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100/80"
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${
+                                statuses.find((s: any) => s.id === prog.status_id)?.code === "active"
+                                  ? "bg-emerald-500"
+                                  : statuses.find((s: any) => s.id === prog.status_id)?.code === "draft"
+                                  ? "bg-slate-400"
+                                  : "bg-red-500"
+                              }`}></span>
+                              {statuses.find((s: any) => s.id === prog.status_id)?.code.toUpperCase() || "DRAFT"}
+                              <ChevronDown size={11} className="opacity-70" />
+                            </button>
+
+                            {openDropdownId === prog.id && (
+                              <>
+                                <div className="fixed inset-0 z-10" onClick={() => setOpenDropdownId(null)}></div>
+                                <div className="absolute left-0 mt-1.5 w-32 bg-white border border-slate-200 rounded-xl shadow-lg z-20 py-1 font-semibold text-[10px] overflow-hidden text-slate-700">
+                                  {statuses
+                                    .filter((s: any) => ["active", "draft", "disabled"].includes(s.code))
+                                    .map((s: any) => (
+                                      <button
+                                        key={s.id}
+                                        type="button"
+                                        onClick={async () => {
+                                          setOpenDropdownId(null);
+                                          const res = await updateProgramAction(prog.id, {
+                                            title: prog.title,
+                                            slug: prog.slug,
+                                            description: prog.description || "",
+                                            status_id: s.id,
+                                            visibility_type_id: prog.visibility_type_id
+                                          });
+                                          if (res.error) {
+                                            setError(res.error);
+                                          } else {
+                                            setSuccess("Program status updated successfully!");
+                                            const reloadRes = await listProgramsAction(selectedInstId);
+                                            if (reloadRes.programs) setPrograms(reloadRes.programs);
+                                          }
+                                        }}
+                                        className="w-full text-left px-3 py-2 hover:bg-slate-50 transition-all flex items-center gap-2"
+                                      >
+                                        <span className={`w-1.5 h-1.5 rounded-full ${
+                                          s.code === "active" ? "bg-emerald-500" : s.code === "draft" ? "bg-slate-400" : "bg-red-500"
+                                        }`}></span>
+                                        {s.code.toUpperCase()}
+                                      </button>
+                                    ))}
+                                </div>
+                              </>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={async () => {
-                              if (confirm("Are you sure you want to delete this live academic program?")) {
-                                const res = await deleteProgramAction(prog.id);
-                                if (res.error) setError(res.error);
-                                else {
-                                  setSuccess("Academic Program deleted.");
-                                  const reloadRes = await listProgramsAction(selectedInstId);
-                                  if (reloadRes.programs) setPrograms(reloadRes.programs);
-                                }
-                              }
-                            }}
-                            className="p-1.5 bg-red-50 hover:bg-red-100 rounded-lg text-red-500 hover:text-red-700 transition-colors cursor-pointer"
-                            title="Delete Program"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                        <td className="px-6 py-4 text-right text-slate-400 font-medium">
+                          Status toggling controls access controls
                         </td>
                       </tr>
                     );
@@ -530,23 +576,37 @@ export default function ProgramManager({
           
           <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
             {programs.length > 0 ? (
-              programs.map((prog) => (
-                <div
-                  key={prog.id}
-                  onClick={() => setSelectedProgram(prog)}
-                  className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
-                    selectedProgram?.id === prog.id
-                      ? "bg-[#0066cc]/10 border-[#0066cc]/30 text-[#0066cc]"
-                      : "bg-slate-50/50 hover:bg-slate-50 border-[#d2d2d7] text-[#1d1d1f]"
-                  }`}
-                >
-                  <div className="min-w-0 pr-2">
-                    <p className="font-semibold truncate">{prog.title}</p>
-                    <p className="text-[10px] text-[#86868b] font-mono truncate">/{prog.slug}</p>
+              programs.map((prog) => {
+                const programStatus = statuses.find((s: any) => s.id === prog.status_id)?.code || "draft";
+                return (
+                  <div
+                    key={prog.id}
+                    onClick={() => setSelectedProgram(prog)}
+                    className={`p-3 rounded-lg border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                      selectedProgram?.id === prog.id
+                        ? "bg-[#0066cc]/10 border-[#0066cc]/30 text-[#0066cc]"
+                        : "bg-slate-50/50 hover:bg-slate-50 border-[#d2d2d7] text-[#1d1d1f]"
+                    }`}
+                  >
+                    <div className="min-w-0 pr-2 flex-1">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <p className="font-semibold truncate">{prog.title}</p>
+                        <span className={`px-1.5 py-0.5 rounded-full text-[8px] font-bold border capitalize shrink-0 ${
+                          programStatus === "active"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : programStatus === "draft"
+                            ? "bg-slate-100 text-slate-700 border-slate-200"
+                            : "bg-red-50 text-red-700 border-red-200"
+                        }`}>
+                          {programStatus}
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-[#86868b] font-mono truncate">/{prog.slug}</p>
+                    </div>
+                    <ChevronRight size={13} className={selectedProgram?.id === prog.id ? "text-[#0066cc]" : "text-[#86868b]"} />
                   </div>
-                  <ChevronRight size={13} className={selectedProgram?.id === prog.id ? "text-[#0066cc]" : "text-[#86868b]"} />
-                </div>
-              ))
+                );
+              })
             ) : (
               <p className="text-[11px] text-[#86868b] text-center py-4 bg-slate-50/50 rounded-lg">No active programs found.</p>
             )}
@@ -588,6 +648,93 @@ export default function ProgramManager({
           {selectedProgram ? (
             <div className="space-y-6">
               
+              {/* Program details premium header */}
+              <div className="bg-white border border-[#d2d2d7] rounded-xl p-5 shadow-sm space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base font-bold text-[#1d1d1f] font-sans">{selectedProgram.title}</h3>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold border bg-slate-100 text-[#475569] border-[#E2E8F0] capitalize">
+                        {statuses.find((s: any) => s.id === selectedProgram.status_id)?.code.toUpperCase() || "DRAFT"}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[#86868b] font-mono mt-0.5">Slug: /{selectedProgram.slug}</p>
+                  </div>
+
+                  {/* Status Dropdown inside Examine Mode */}
+                  <div className="relative inline-block text-left self-start sm:self-center">
+                    <button
+                      onClick={() => setOpenDropdownId(openDropdownId === `examine-${selectedProgram.id}` ? null : `examine-${selectedProgram.id}`)}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold border flex items-center gap-1.5 cursor-pointer shadow-xs transition-all ${
+                        statuses.find((s: any) => s.id === selectedProgram.status_id)?.code === "active"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100/80"
+                          : statuses.find((s: any) => s.id === selectedProgram.status_id)?.code === "draft"
+                          ? "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200/80"
+                          : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100/80"
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        statuses.find((s: any) => s.id === selectedProgram.status_id)?.code === "active"
+                          ? "bg-emerald-500"
+                          : statuses.find((s: any) => s.id === selectedProgram.status_id)?.code === "draft"
+                          ? "bg-slate-400"
+                          : "bg-red-500"
+                      }`}></span>
+                      Status: {statuses.find((s: any) => s.id === selectedProgram.status_id)?.code.toUpperCase() || "DRAFT"}
+                      <ChevronDown size={11} className="opacity-70" />
+                    </button>
+
+                    {openDropdownId === `examine-${selectedProgram.id}` && (
+                      <>
+                        <div className="fixed inset-0 z-10" onClick={() => setOpenDropdownId(null)}></div>
+                        <div className="absolute right-0 mt-1.5 w-32 bg-white border border-slate-200 rounded-xl shadow-lg z-20 py-1 font-semibold text-[10px] overflow-hidden text-slate-700">
+                          {statuses
+                            .filter((s: any) => ["active", "draft", "disabled"].includes(s.code))
+                            .map((s: any) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={async () => {
+                                  setOpenDropdownId(null);
+                                  const res = await updateProgramAction(selectedProgram.id, {
+                                    title: selectedProgram.title,
+                                    slug: selectedProgram.slug,
+                                    description: selectedProgram.description || "",
+                                    status_id: s.id,
+                                    visibility_type_id: selectedProgram.visibility_type_id
+                                  });
+                                  if (res.error) {
+                                    setError(res.error);
+                                  } else {
+                                    setSuccess("Program status updated successfully!");
+                                    const reloadRes = await listProgramsAction(selectedInstId);
+                                    if (reloadRes.programs) {
+                                      setPrograms(reloadRes.programs);
+                                      const updatedProg = reloadRes.programs.find((p: any) => p.id === selectedProgram.id);
+                                      if (updatedProg) setSelectedProgram(updatedProg);
+                                    }
+                                  }
+                                }}
+                                className="w-full text-left px-3 py-2 hover:bg-slate-50 transition-all flex items-center gap-2"
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  s.code === "active" ? "bg-emerald-500" : s.code === "draft" ? "bg-slate-400" : "bg-red-500"
+                                }`}></span>
+                                {s.code.toUpperCase()}
+                              </button>
+                            ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {selectedProgram.description && (
+                  <p className="text-xs text-[#475569] leading-relaxed">
+                    {selectedProgram.description}
+                  </p>
+                )}
+              </div>
+
               {/* Courses list */}
               <div className="space-y-3">
                 <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#86868b]">Instantiated Courses</h4>

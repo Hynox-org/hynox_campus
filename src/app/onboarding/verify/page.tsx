@@ -84,6 +84,7 @@ export default async function OnboardingVerifyPage({ searchParams }: PageProps) 
     trainer_onboarding: "Teacher / Instructor",
     institution_admin_invite: "Institution Administrator",
     mentor_invite: "Mentor",
+    super_admin_invite: "Super Administrator",
   };
   const roleLabel = roleNameMap[invitationType] || "Member";
 
@@ -91,7 +92,10 @@ export default async function OnboardingVerifyPage({ searchParams }: PageProps) 
     "use server";
     // Trigger Google Auth login, which automatically links the auth user account
     // to pre-provisioned core.users on callback via the database trigger.
-    await signInWithGoogle("/");
+    const res = await signInWithGoogle("/");
+    if (res.url) {
+      redirect(res.url);
+    }
   }
 
   return (

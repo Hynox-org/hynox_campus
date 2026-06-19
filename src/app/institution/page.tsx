@@ -1,9 +1,9 @@
 import { getCurrentUser } from "@/services/auth";
 import { listOnboardingInvitations } from "@/services/onboarding";
 import { listPrograms, getAcademicLookups, listTenantInstructors, listTenantCourses } from "@/services/academic";
-import { signOutAction } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
-import { Terminal, LogOut } from "lucide-react";
+import { Terminal, AlertTriangle } from "lucide-react";
+import SignOutButton from "@/components/sign-out-button";
 import InstitutionPanel from "./institution-panel";
 import { listCohorts, listEnrollments } from "@/services/delivery";
 import { listProjectSubmissions, listChallengeSubmissions, listAllActivities } from "@/services/learning";
@@ -59,7 +59,7 @@ export default async function InstitutionAdminPage() {
       listOnboardingInvitations(),
       listCohorts(tenantId),
       listEnrollments(tenantId),
-      listPrograms(tenantId),
+      listPrograms(tenantId, primaryRole),
       listTenantInstructors(tenantId),
       listProjectSubmissions(tenantId),
       listChallengeSubmissions(tenantId),
@@ -106,35 +106,44 @@ export default async function InstitutionAdminPage() {
               {primaryRole}
             </span>
             
-            <form action={signOutAction}>
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-3 py-1.5 rounded-lg hover:bg-[#DC2626] hover:text-white transition-all text-xs font-semibold"
-              >
-                <LogOut size={13} />
-                Sign Out
-              </button>
-            </form>
+            <SignOutButton />
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-10 flex-1 w-full">
-        <InstitutionPanel 
-          adminEmail={authUser.email} 
-          institution={institution}
-          initialInvitations={invitations}
-          initialPrograms={programs}
-          initialInstructors={instructors}
-          initialCohorts={cohorts}
-          initialEnrollments={enrollments}
-          initialProjectSubmissions={projectSubmissions}
-          initialChallengeSubmissions={challengeSubmissions}
-          initialActivities={activities}
-          initialCoursesList={coursesList}
-          initialQuizAttempts={quizAttempts}
-          lookups={lookups}
-        />
+        {institution.status === "inactive" || institution.status === "suspended" ? (
+          <div className="bg-white border border-[#E2E8F0] p-8 rounded-2xl shadow-sm max-w-2xl mx-auto text-center space-y-6 mt-10">
+            <div className="mx-auto w-16 h-16 bg-[#DC2626]/10 text-[#DC2626] rounded-full flex items-center justify-center border border-[#DC2626]/20">
+              <AlertTriangle size={32} />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold text-[#0F172A]">Campus Dashboard Locked</h2>
+              <p className="text-sm text-[#475569]">
+                The institution <strong className="text-[#0F172A]">{institution.name}</strong> is currently deactivated or suspended.
+              </p>
+              <p className="text-xs text-[#64748B] leading-relaxed">
+                All administrator options, onboarding links, and class cohort controls have been disabled for this campus. Please contact platform super administrators for billing or account reinstatement queries.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <InstitutionPanel 
+            adminEmail={authUser.email} 
+            institution={institution}
+            initialInvitations={invitations}
+            initialPrograms={programs}
+            initialInstructors={instructors}
+            initialCohorts={cohorts}
+            initialEnrollments={enrollments}
+            initialProjectSubmissions={projectSubmissions}
+            initialChallengeSubmissions={challengeSubmissions}
+            initialActivities={activities}
+            initialCoursesList={coursesList}
+            initialQuizAttempts={quizAttempts}
+            lookups={lookups}
+          />
+        )}
       </main>
     </div>
   );

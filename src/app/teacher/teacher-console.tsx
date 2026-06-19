@@ -154,6 +154,12 @@ export default function TeacherConsole({
   const [programsList, setProgramsList] = useState<any[]>(initialPrograms || []);
   const [selectedProgramId, setSelectedProgramId] = useState<string>(initialPrograms?.[0]?.id || "");
 
+  const currentSelectedInst = assignedInstitutions.find(i => i.id === selectedInstId);
+  const isSelectedInstDisabled = currentSelectedInst && (currentSelectedInst.status === "inactive" || currentSelectedInst.status === "suspended");
+
+  const currentSelectedProg = programsList.find(p => p.id === selectedProgramId);
+  const isSelectedProgDisabled = currentSelectedProg && (currentSelectedProg.status?.code === "suspended" || currentSelectedProg.status?.code === "disabled");
+
   // Main collections
   const [cohorts, setCohorts] = useState(initialCohorts);
   const [activities, setActivities] = useState(initialActivities);
@@ -2587,7 +2593,9 @@ export default function TeacherConsole({
                   className="bg-white border border-[#E2E8F0] px-3 py-2 rounded-xl text-xs font-bold text-[#0f172a] focus:outline-none focus:border-[#2563EB] shadow-sm w-full"
                 >
                   {programsList.map(prog => (
-                    <option key={prog.id} value={prog.id}>{prog.title}</option>
+                    <option key={prog.id} value={prog.id}>
+                      {prog.title} {prog.status?.code === "draft" ? " (Draft)" : ""}
+                    </option>
                   ))}
                 </select>
               )}
@@ -2597,7 +2605,24 @@ export default function TeacherConsole({
       </div>
 
       <div className="flex flex-col lg:flex-row gap-8 min-h-[calc(100vh-8rem)]">
-        {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
+        {isSelectedInstDisabled ? (
+          <div className="flex-1 bg-white border border-[#E2E8F0] p-8 rounded-2xl shadow-sm max-w-2xl mx-auto text-center space-y-6 mt-10 h-fit">
+            <div className="mx-auto w-16 h-16 bg-[#DC2626]/10 text-[#DC2626] rounded-full flex items-center justify-center border border-[#DC2626]/20">
+              <ShieldAlert size={32} />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold text-[#0F172A]">Institution Access Suspended</h2>
+              <p className="text-sm text-[#475569]">
+                The institution <strong className="text-[#0F172A]">{currentSelectedInst?.name}</strong> is currently deactivated or suspended.
+              </p>
+              <p className="text-xs text-[#64748B] leading-relaxed">
+                All teacher dashboard controls and curriculum management tools have been locked for this campus. If you work with other institutions, please select another active institution from the dropdown menu above.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
         <div className="w-14 shrink-0 flex flex-col items-center gap-4 py-2 border-r border-[#E2E8F0] pr-4">
           <button
             onClick={() => {
@@ -2776,8 +2801,24 @@ export default function TeacherConsole({
 
         {/* Main Content Area */}
         <main className="flex-1 min-w-0 space-y-6">
-          
-          {/* Status Alerts */}
+          {isSelectedProgDisabled ? (
+            <div className="bg-white border border-[#E2E8F0] p-8 rounded-2xl shadow-sm max-w-2xl mx-auto text-center space-y-6 mt-10">
+              <div className="mx-auto w-16 h-16 bg-[#DC2626]/10 text-[#DC2626] rounded-full flex items-center justify-center border border-[#DC2626]/20">
+                <ShieldAlert size={32} />
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-xl font-bold text-[#0F172A]">Program Access Suspended</h2>
+                <p className="text-sm text-[#475569]">
+                  The program <strong className="text-[#0F172A]">{currentSelectedProg?.title}</strong> is currently deactivated or suspended.
+                </p>
+                <p className="text-xs text-[#64748B] leading-relaxed">
+                  All teaching tools, roster management, grading, and syllabus editors have been locked for this program. Please select another active program from the header dropdown to continue.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Status Alerts */}
           {statusMessage && (
             <div className={`p-4 rounded-xl text-xs font-bold border transition-all ${
               statusMessage.type === "success" 
@@ -2785,6 +2826,18 @@ export default function TeacherConsole({
                 : "bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/20"
             }`}>
               {statusMessage.text}
+            </div>
+          )}
+
+          {currentSelectedProg?.status?.code === "draft" && (
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-xs text-amber-800 flex items-start gap-2.5 shadow-sm">
+              <AlertCircle size={16} className="text-amber-500 mt-0.5 shrink-0" />
+              <div>
+                <span className="font-bold">Draft Program Pathway</span>
+                <p className="mt-0.5 text-amber-700 font-medium">
+                  This program is currently in draft mode. You can customize, update, and manage the curriculum/syllabus, but students and institutions won't be able to view or enroll in it until a Super Admin approves and activates it.
+                </p>
+              </div>
             </div>
           )}
 
@@ -4358,7 +4411,11 @@ export default function TeacherConsole({
             </div>
           )}
 
+            </>
+          )}
         </main>
+          </>
+        )}
       </div>
 
       {/* STUDENT DETAIL SLIDE-OVER DRAWER */}

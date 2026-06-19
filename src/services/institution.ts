@@ -273,4 +273,16 @@ export async function unmapTeacherFromTenant(userId: string, tenantId: string) {
   return true;
 }
 
+export async function updateInstitutionStatus(institutionId: string, status: string) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .schema("institution")
+    .from("institutions")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", institutionId);
+  if (error) throw error;
+  return true;
+}
+
+
 

@@ -1,7 +1,7 @@
 import { getCurrentUser } from "@/services/auth";
-import { signOutAction } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
-import { Terminal, LogOut } from "lucide-react";
+import { Terminal } from "lucide-react";
+import SignOutButton from "@/components/sign-out-button";
 import TeacherConsole from "./teacher-console";
 import { listCohorts, listEnrollments } from "@/services/delivery";
 import { listAllActivities, listProjectSubmissions, listChallengeSubmissions } from "@/services/learning";
@@ -48,7 +48,7 @@ export default async function TeacherPage() {
         listProjectSubmissions(resolvedTenantId),
         listChallengeSubmissions(resolvedTenantId),
         listEnrollments(resolvedTenantId),
-        listPrograms(resolvedTenantId)
+        listPrograms(resolvedTenantId, primaryRole)
       ]);
     } catch (err) {
       console.error("Failed to load teacher dashboard datasets for institution:", err);
@@ -74,15 +74,7 @@ export default async function TeacherPage() {
               {primaryRole}
             </span>
             
-            <form action={signOutAction}>
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-3 py-1.5 rounded-lg hover:bg-[#DC2626] hover:text-white transition-all text-xs font-semibold"
-              >
-                <LogOut size={13} />
-                Sign Out
-              </button>
-            </form>
+            <SignOutButton />
           </div>
         </div>
       </header>

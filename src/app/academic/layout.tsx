@@ -1,9 +1,9 @@
 import React from "react";
 import { getCurrentUser } from "@/services/auth";
-import { signOutAction } from "@/app/actions/auth-actions";
 import { redirect } from "next/navigation";
-import { Terminal, LogOut, BookOpen, GraduationCap, Home } from "lucide-react";
+import { Terminal, BookOpen, GraduationCap, Home } from "lucide-react";
 import Link from "next/link";
+import SignOutButton from "@/components/sign-out-button";
 
 export const dynamic = "force-dynamic";
 
@@ -76,15 +76,7 @@ export default async function AcademicLayout({ children }: AcademicLayoutProps) 
               {primaryRole}
             </span>
             
-            <form action={signOutAction}>
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-3 py-1.5 rounded-lg hover:bg-[#DC2626] hover:text-white transition-all font-semibold"
-              >
-                <LogOut size={13} />
-                Sign Out
-              </button>
-            </form>
+            <SignOutButton />
           </div>
         </div>
       </header>
