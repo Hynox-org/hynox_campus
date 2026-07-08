@@ -20,6 +20,7 @@ import {
 } from "@/app/actions/delivery-actions";
 import { listProgramsAction, listCoursesAction, listLessonsForCourseAction } from "@/app/actions/academic-actions";
 import { listAllActivitiesAction, listQuizAttemptsAction, listProjectSubmissionsAction, listChallengeSubmissionsAction } from "@/app/actions/learning-actions";
+import AttendancePanel from "@/components/attendance-panel";
 import { 
   Building, 
   Users, 
@@ -47,7 +48,7 @@ interface DeliveryManagerProps {
 
 export default function DeliveryManager({ institutions, initialTab }: DeliveryManagerProps) {
   const [selectedInstId, setSelectedInstId] = useState(institutions[0]?.id || "");
-  const [activeSubTab, setActiveSubTab] = useState<"cohorts" | "enrollments" | "assignments">(initialTab);
+  const [activeSubTab, setActiveSubTab] = useState<"cohorts" | "enrollments" | "assignments" | "attendance">(initialTab as any);
 
   useEffect(() => {
     setActiveSubTab(initialTab);
@@ -489,10 +490,10 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
       )}
 
       {/* Sub Tabs */}
-      <div className="flex border-b border-[#d2d2d7]">
+      <div className="flex overflow-x-auto whitespace-nowrap border-b border-[#d2d2d7] scrollbar-none">
         <button
           onClick={() => setActiveSubTab("cohorts")}
-          className={`px-5 py-2.5 font-bold border-b-2 transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-5 py-2.5 font-bold border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
             activeSubTab === "cohorts"
               ? "border-[#0066cc] text-[#0066cc]"
               : "border-transparent text-[#86868b] hover:text-[#1d1d1f]"
@@ -503,7 +504,7 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
         </button>
         <button
           onClick={() => setActiveSubTab("enrollments")}
-          className={`px-5 py-2.5 font-bold border-b-2 transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-5 py-2.5 font-bold border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
             activeSubTab === "enrollments"
               ? "border-[#0066cc] text-[#0066cc]"
               : "border-transparent text-[#86868b] hover:text-[#1d1d1f]"
@@ -514,7 +515,7 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
         </button>
         <button
           onClick={() => setActiveSubTab("assignments")}
-          className={`px-5 py-2.5 font-bold border-b-2 transition-all flex items-center gap-2 ${
+          className={`px-3 sm:px-5 py-2.5 font-bold border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
             activeSubTab === "assignments"
               ? "border-[#0066cc] text-[#0066cc]"
               : "border-transparent text-[#86868b] hover:text-[#1d1d1f]"
@@ -522,6 +523,17 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
         >
           <BookOpen size={14} />
           Course Assignments ({assignments.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab("attendance")}
+          className={`px-3 sm:px-5 py-2.5 font-bold border-b-2 transition-all flex items-center gap-1.5 shrink-0 ${
+            activeSubTab === "attendance"
+              ? "border-[#0066cc] text-[#0066cc]"
+              : "border-transparent text-[#86868b] hover:text-[#1d1d1f]"
+          }`}
+        >
+          <Calendar size={14} />
+          Attendance Tracker
         </button>
       </div>
 
@@ -550,53 +562,55 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
           </div>
 
           <div className="bg-white border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
-                  <th className="px-6 py-3">Cohort Name</th>
-                  <th className="px-6 py-3">Code</th>
-                  <th className="px-6 py-3">Program</th>
-                  <th className="px-6 py-3">Status</th>
-                  <th className="px-6 py-3">Timeline</th>
-                  <th className="px-6 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#d2d2d7]">
-                {cohorts.length > 0 ? (
-                  cohorts.map((cohort) => (
-                    <tr key={cohort.id} className="hover:bg-slate-50/30">
-                      <td className="px-6 py-3.5 font-semibold text-[#1d1d1f]">{cohort.name}</td>
-                      <td className="px-6 py-3.5 text-[#86868b] font-mono">{cohort.code}</td>
-                      <td className="px-6 py-3.5 text-[#86868b]">{cohort.program?.title}</td>
-                      <td className="px-6 py-3.5">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                          cohort.status_code === "active" ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20" : "bg-slate-100 text-[#86868b] border-[#d2d2d7]"
-                        }`}>
-                          {cohort.status_code}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3.5 text-[#86868b] font-mono">
-                        {cohort.start_date ? cohort.start_date.substring(0, 10) : "N/A"} to {cohort.end_date ? cohort.end_date.substring(0, 10) : "N/A"}
-                      </td>
-                      <td className="px-6 py-3.5 text-right flex items-center justify-end gap-2.5">
-                        <button onClick={() => handleEditCohortClick(cohort)} className="text-[#0066cc] hover:text-[#0066cc]/80" title="Edit">
-                          <Edit size={14} />
-                        </button>
-                        <button onClick={() => handleDeleteCohort(cohort.id)} className="text-[#DC2626] hover:text-[#DC2626]/80" title="Delete">
-                          <Trash2 size={14} />
-                        </button>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
+                    <th className="px-6 py-3">Cohort Name</th>
+                    <th className="px-6 py-3">Code</th>
+                    <th className="px-6 py-3">Program</th>
+                    <th className="px-6 py-3">Status</th>
+                    <th className="px-6 py-3">Timeline</th>
+                    <th className="px-6 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#d2d2d7]">
+                  {cohorts.length > 0 ? (
+                    cohorts.map((cohort) => (
+                      <tr key={cohort.id} className="hover:bg-slate-50/30">
+                        <td className="px-6 py-3.5 font-semibold text-[#1d1d1f]">{cohort.name}</td>
+                        <td className="px-6 py-3.5 text-[#86868b] font-mono">{cohort.code}</td>
+                        <td className="px-6 py-3.5 text-[#86868b]">{cohort.program?.title}</td>
+                        <td className="px-6 py-3.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            cohort.status_code === "active" ? "bg-[#16A34A]/10 text-[#16A34A] border-[#16A34A]/20" : "bg-slate-100 text-[#86868b] border-[#d2d2d7]"
+                          }`}>
+                            {cohort.status_code}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3.5 text-[#86868b] font-mono">
+                          {cohort.start_date ? cohort.start_date.substring(0, 10) : "N/A"} to {cohort.end_date ? cohort.end_date.substring(0, 10) : "N/A"}
+                        </td>
+                        <td className="px-6 py-3.5 text-right flex items-center justify-end gap-2.5">
+                          <button onClick={() => handleEditCohortClick(cohort)} className="text-[#0066cc] hover:text-[#0066cc]/80" title="Edit">
+                            <Edit size={14} />
+                          </button>
+                          <button onClick={() => handleDeleteCohort(cohort.id)} className="text-[#DC2626] hover:text-[#DC2626]/80" title="Delete">
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-8 text-center text-[#86868b] font-semibold bg-slate-50/10">
+                        No cohorts defined under this campus yet.
                       </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-[#86868b] font-semibold bg-slate-50/10">
-                      No cohorts defined under this campus yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -605,12 +619,12 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
       {!loading && activeSubTab === "enrollments" && (
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-slate-50 p-4 border border-[#d2d2d7] rounded-xl shadow-sm">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
               <label className="font-bold text-xs text-[#86868b] uppercase tracking-wider whitespace-nowrap">Filter Cohort Batch:</label>
               <select
                 value={selectedCohortFilter}
                 onChange={(e) => setSelectedCohortFilter(e.target.value)}
-                className="bg-white border border-[#d2d2d7] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-semibold min-w-[200px]"
+                className="bg-white border border-[#d2d2d7] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#0066cc] shadow-sm font-semibold w-full sm:min-w-[200px] sm:w-auto"
               >
                 <option value="">-- All Cohorts --</option>
                 {cohorts.map(coh => (
@@ -631,66 +645,68 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
                 setStudentSearchQuery("");
                 setEnrollModalOpen(true);
               }}
-              className="bg-[#0066cc] text-white px-3 py-1.5 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-all flex items-center gap-1 shrink-0"
+              className="bg-[#0066cc] text-white px-3 py-1.5 rounded-lg shadow-sm font-semibold hover:bg-[#0066cc]/95 transition-all flex items-center justify-center gap-1 shrink-0 w-full sm:w-auto text-xs"
             >
               <Plus size={13} /> Enroll Students
             </button>
           </div>
 
           <div className="bg-white border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
-                  <th className="px-6 py-3">Student Name</th>
-                  <th className="px-6 py-3">Email</th>
-                  <th className="px-6 py-3">Cohort</th>
-                  <th className="px-6 py-3">Status</th>
-                  <th className="px-6 py-3">Enrolled At</th>
-                  <th className="px-6 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#d2d2d7]">
-                {(() => {
-                  const filteredEnrollments = selectedCohortFilter
-                    ? enrollments.filter(e => e.cohort_id === selectedCohortFilter)
-                    : enrollments;
-                  return filteredEnrollments.length > 0 ? (
-                    filteredEnrollments.map((enr) => (
-                    <tr key={enr.id} className="hover:bg-slate-50/30">
-                      <td className="px-6 py-3.5 font-semibold text-[#1d1d1f]">{enr.student?.full_name || "N/A"}</td>
-                      <td className="px-6 py-3.5 text-[#86868b]">{enr.student?.email || "N/A"}</td>
-                      <td className="px-6 py-3.5 text-[#86868b]">{enr.cohort?.name} ({enr.cohort?.code})</td>
-                      <td className="px-6 py-3.5">
-                        <select
-                          value={enr.status_code}
-                          onChange={(e) => handleEnrollStatusChange(enr.id, e.target.value)}
-                          className="bg-white border border-[#d2d2d7] rounded px-2 py-0.5 font-semibold text-[10px]"
-                        >
-                          {enrollmentStatuses.map(status => (
-                            <option key={status.code} value={status.code}>{status.code}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-6 py-3.5 text-[#86868b] font-mono">
-                        {enr.enrolled_at ? enr.enrolled_at.substring(0, 10) : "N/A"}
-                      </td>
-                      <td className="px-6 py-3.5 text-right">
-                        <button onClick={() => handleRemoveEnrollment(enr.id)} className="text-[#DC2626] hover:text-[#DC2626]/80" title="Remove enrollment">
-                          <Trash2 size={14} />
-                        </button>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
+                    <th className="px-6 py-3">Student Name</th>
+                    <th className="px-6 py-3">Email</th>
+                    <th className="px-6 py-3">Cohort</th>
+                    <th className="px-6 py-3">Status</th>
+                    <th className="px-6 py-3">Enrolled At</th>
+                    <th className="px-6 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#d2d2d7]">
+                  {(() => {
+                    const filteredEnrollments = selectedCohortFilter
+                      ? enrollments.filter(e => e.cohort_id === selectedCohortFilter)
+                      : enrollments;
+                    return filteredEnrollments.length > 0 ? (
+                      filteredEnrollments.map((enr) => (
+                      <tr key={enr.id} className="hover:bg-slate-50/30">
+                        <td className="px-6 py-3.5 font-semibold text-[#1d1d1f]">{enr.student?.full_name || "N/A"}</td>
+                        <td className="px-6 py-3.5 text-[#86868b]">{enr.student?.email || "N/A"}</td>
+                        <td className="px-6 py-3.5 text-[#86868b]">{enr.cohort?.name} ({enr.cohort?.code})</td>
+                        <td className="px-6 py-3.5">
+                          <select
+                            value={enr.status_code}
+                            onChange={(e) => handleEnrollStatusChange(enr.id, e.target.value)}
+                            className="bg-white border border-[#d2d2d7] rounded px-2 py-0.5 font-semibold text-[10px]"
+                          >
+                            {enrollmentStatuses.map(status => (
+                              <option key={status.code} value={status.code}>{status.code}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-6 py-3.5 text-[#86868b] font-mono">
+                          {enr.enrolled_at ? enr.enrolled_at.substring(0, 10) : "N/A"}
+                        </td>
+                        <td className="px-6 py-3.5 text-right">
+                          <button onClick={() => handleRemoveEnrollment(enr.id)} className="text-[#DC2626] hover:text-[#DC2626]/80" title="Remove enrollment">
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-8 text-center text-[#86868b] font-semibold bg-slate-50/10">
+                        No student enrollments registered.
                       </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-[#86868b] font-semibold bg-slate-50/10">
-                      No student enrollments registered.
-                    </td>
-                  </tr>
-                );
-                })()}
-              </tbody>
-            </table>
+                  );
+                  })()}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -712,55 +728,65 @@ export default function DeliveryManager({ institutions, initialTab }: DeliveryMa
           </div>
 
           <div className="bg-white border border-[#d2d2d7] rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
-                  <th className="px-6 py-3">Course Name</th>
-                  <th className="px-6 py-3">Cohort</th>
-                  <th className="px-6 py-3">Type</th>
-                  <th className="px-6 py-3">Required</th>
-                  <th className="px-6 py-3">Timelines</th>
-                  <th className="px-6 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#d2d2d7]">
-                {assignments.length > 0 ? (
-                  assignments.map((ass) => (
-                    <tr key={ass.id} className="hover:bg-slate-50/30">
-                      <td className="px-6 py-3.5 font-semibold text-[#1d1d1f]">{ass.course?.title}</td>
-                      <td className="px-6 py-3.5 text-[#86868b]">{ass.cohort?.name} ({ass.cohort?.code})</td>
-                      <td className="px-6 py-3.5 text-[#86868b] font-medium">Academic Assigned</td>
-                      <td className="px-6 py-3.5">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
-                          ass.is_required ? "bg-[#0066cc]/10 text-[#0066cc] border-[#0066cc]/20" : "bg-slate-100 text-[#86868b] border-[#d2d2d7]"
-                        }`}>
-                          {ass.is_required ? "Required" : "Optional"}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3.5 text-[#86868b] font-mono">
-                        {ass.start_date ? ass.start_date.substring(0, 10) : "Immediate"} to {ass.due_date ? ass.due_date.substring(0, 10) : "Open"}
-                      </td>
-                      <td className="px-6 py-3.5 text-right">
-                        <button onClick={() => handleRemoveAssignment(ass.id)} className="text-[#DC2626] hover:text-[#DC2626]/80" title="Remove course assignment">
-                          <Trash2 size={14} />
-                        </button>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
+                    <th className="px-6 py-3">Course Name</th>
+                    <th className="px-6 py-3">Cohort</th>
+                    <th className="px-6 py-3">Type</th>
+                    <th className="px-6 py-3">Required</th>
+                    <th className="px-6 py-3">Timelines</th>
+                    <th className="px-6 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#d2d2d7]">
+                  {assignments.length > 0 ? (
+                    assignments.map((ass) => (
+                      <tr key={ass.id} className="hover:bg-slate-50/30">
+                        <td className="px-6 py-3.5 font-semibold text-[#1d1d1f]">{ass.course?.title}</td>
+                        <td className="px-6 py-3.5 text-[#86868b]">{ass.cohort?.name} ({ass.cohort?.code})</td>
+                        <td className="px-6 py-3.5 text-[#86868b] font-medium">Academic Assigned</td>
+                        <td className="px-6 py-3.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                            ass.is_required ? "bg-[#0066cc]/10 text-[#0066cc] border-[#0066cc]/20" : "bg-slate-100 text-[#86868b] border-[#d2d2d7]"
+                          }`}>
+                            {ass.is_required ? "Required" : "Optional"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3.5 text-[#86868b] font-mono">
+                          {ass.start_date ? ass.start_date.substring(0, 10) : "Immediate"} to {ass.due_date ? ass.due_date.substring(0, 10) : "Open"}
+                        </td>
+                        <td className="px-6 py-3.5 text-right">
+                          <button onClick={() => handleRemoveAssignment(ass.id)} className="text-[#DC2626] hover:text-[#DC2626]/80" title="Remove course assignment">
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-8 text-center text-[#86868b] font-semibold bg-slate-50/10">
+                        No course assignments defined.
                       </td>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-8 text-center text-[#86868b] font-semibold bg-slate-50/10">
-                      No course assignments defined.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Cohort Right Sidebar Panel */}
+      {/* attendance tracker view */}
+      {!loading && activeSubTab === "attendance" && (
+        <AttendancePanel
+          cohorts={cohorts}
+          students={students}
+          enrollments={enrollments}
+          userRole="super_admin"
+        />
+      )}
       {cohortModalOpen && (
         <>
           {/* Backdrop overlay */}

@@ -68,11 +68,11 @@ export default async function AcademicLayout({ children }: AcademicLayoutProps) 
             </nav>
           </div>
 
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-2 sm:gap-4 text-xs">
             <span className="hidden sm:inline text-[#475569] font-medium">
               Campus: <strong className="text-[#0F172A] font-bold">{tenantName}</strong>
             </span>
-            <span className="px-2 py-0.5 rounded-full font-bold border bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20 text-[10px] capitalize">
+            <span className="hidden sm:inline-block px-2 py-0.5 rounded-full font-bold border bg-[#2563EB]/10 text-[#2563EB] border-[#2563EB]/20 text-[10px] capitalize">
               {primaryRole}
             </span>
             

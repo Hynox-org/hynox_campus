@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useTransition, useEffect } from "react";
+import AttendancePanel from "@/components/attendance-panel";
 import { 
   Users, 
   BookOpen, 
@@ -119,9 +120,15 @@ export default function TeacherConsole({
   assignedInstitutions,
   initialPrograms
 }: TeacherConsoleProps) {
-  const [activeTab, setActiveTab] = useState<"overview" | "roster" | "projects" | "challenges" | "activities-manager" | "syllabus" | "delivery" | "auditor">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "roster" | "projects" | "challenges" | "activities-manager" | "syllabus" | "delivery" | "auditor" | "attendance">("overview");
   const [activeParentTab, setActiveParentTab] = useState<"overview" | "students" | "assessments" | "curriculum">("overview");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setIsSidebarOpen(false);
+    }
+  }, []);
   
   // Unified Auditor states
   const [quizAttempts, setQuizAttempts] = useState<any[]>([]);
@@ -166,6 +173,16 @@ export default function TeacherConsole({
   const [projectSubmissions, setProjectSubmissions] = useState(initialProjectSubmissions);
   const [challengeSubmissions, setChallengeSubmissions] = useState(initialChallengeSubmissions);
   const [enrollments, setEnrollments] = useState(initialEnrollments);
+
+  const studentsList = React.useMemo(() => {
+    const list: any[] = [];
+    enrollments.forEach((e: any) => {
+      if (e.student && !list.some(s => s.id === e.student.id)) {
+        list.push(e.student);
+      }
+    });
+    return list;
+  }, [enrollments]);
 
   // General selection states
   const [selectedCohortId, setSelectedCohortId] = useState<string>("");
@@ -2622,182 +2639,252 @@ export default function TeacherConsole({
           </div>
         ) : (
           <>
-            {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
-        <div className="w-14 shrink-0 flex flex-col items-center gap-4 py-2 border-r border-[#E2E8F0] pr-4">
-          <button
-            onClick={() => {
-              setActiveParentTab("overview");
-              setActiveTab("overview");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "overview"
-                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
-                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
-            }`}
-            title="Overview Space"
-          >
-            <Layers size={18} />
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveParentTab("students");
-              setActiveTab("roster");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "students"
-                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
-                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
-            }`}
-            title="Student Roster"
-          >
-            <Users size={18} />
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveParentTab("assessments");
-              setActiveTab("projects");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "assessments"
-                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
-                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
-            }`}
-            title="Assessments & Grading"
-          >
-            <CheckSquare size={18} />
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveParentTab("curriculum");
-              setActiveTab("activities-manager");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "curriculum"
-                ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
-                : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
-            }`}
-            title="Curriculum & Syllabus"
-          >
-            <BookOpen size={18} />
-          </button>
-        </div>
-
-        {/* SECONDARY SIDEBAR (Sub-options list) */}
-        {isSidebarOpen && (
-          <div className="w-52 shrink-0 flex flex-col gap-2 border-r border-[#E2E8F0] pr-4">
-            <h4 className="text-[10px] font-bold text-[#475569] uppercase tracking-wider px-2 mb-2">
-              {activeParentTab === "overview" && "Overview Space"}
-              {activeParentTab === "students" && "Student Hub"}
-              {activeParentTab === "assessments" && "Auditing & Grading"}
-              {activeParentTab === "curriculum" && "Curriculum Space"}
-            </h4>
-            
-            {activeParentTab === "overview" && (
-              <button
-                onClick={() => setActiveTab("overview")}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                  activeTab === "overview"
-                    ? "bg-[#2563EB]/10 text-[#2563EB]"
-                    : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                }`}
-              >
-                Dashboard Overview
-              </button>
-            )}
-            {activeParentTab === "students" && (
-              <>
-                <button
-                  onClick={() => setActiveTab("roster")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                    activeTab === "roster"
-                      ? "bg-[#2563EB]/10 text-[#2563EB]"
-                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                  }`}
-                >
-                  Student Directory
-                </button>
-                <button
-                  onClick={() => setActiveTab("delivery")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                    activeTab === "delivery"
-                      ? "bg-[#2563EB]/10 text-[#2563EB]"
-                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                  }`}
-                >
-                  Cohorts & Delivery
-                </button>
-              </>
+            {/* Mobile Sidebar Drawer Backdrop */}
+            {isSidebarOpen && (
+              <div 
+                className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 lg:hidden"
+                onClick={() => setIsSidebarOpen(false)}
+              />
             )}
 
-            {activeParentTab === "assessments" && (
-              <>
+            {/* Sidebars container - Collapsible drawer on mobile, inline on desktop */}
+            <div className={`
+              fixed inset-y-0 left-0 z-50 bg-white lg:bg-transparent p-4 lg:p-0 border-r border-[#E2E8F0] lg:border-none flex gap-4 transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:z-auto lg:h-auto
+              ${isSidebarOpen ? "translate-x-0" : "-translate-x-full lg:flex lg:translate-x-0"}
+            `}>
+              {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
+              <div className="w-14 shrink-0 flex flex-col items-center gap-4 py-2 border-r border-[#E2E8F0] pr-4">
                 <button
-                  onClick={() => setActiveTab("auditor")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                    activeTab === "auditor"
-                      ? "bg-[#2563EB]/10 text-[#2563EB]"
-                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  onClick={() => {
+                    setActiveParentTab("overview");
+                    setActiveTab("overview");
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    activeParentTab === "overview"
+                      ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                      : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
                   }`}
+                  title="Overview Space"
                 >
-                  Submissions Auditor
+                  <Layers size={18} />
                 </button>
+                
                 <button
-                  onClick={() => setActiveTab("projects")}
-                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                    activeTab === "projects"
-                      ? "bg-[#2563EB]/10 text-[#2563EB]"
-                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  onClick={() => {
+                    setActiveParentTab("students");
+                    setActiveTab("roster");
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    activeParentTab === "students"
+                      ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                      : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
                   }`}
+                  title="Student Roster"
                 >
-                  <span>Project Validator</span>
-                  {pendingProjectCount > 0 && (
-                    <span className="bg-[#DC2626] text-white px-2 py-0.5 rounded-full text-[9px] font-bold animate-pulse">
-                      {pendingProjectCount}
-                    </span>
-                  )}
+                  <Users size={18} />
                 </button>
+                
                 <button
-                  onClick={() => setActiveTab("challenges")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                    activeTab === "challenges"
-                      ? "bg-[#2563EB]/10 text-[#2563EB]"
-                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                  onClick={() => {
+                    setActiveParentTab("assessments");
+                    setActiveTab("projects");
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    activeParentTab === "assessments"
+                      ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                      : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
                   }`}
+                  title="Assessments & Grading"
                 >
-                  Challenge Auditor
+                  <CheckSquare size={18} />
                 </button>
-              </>
-            )}
+                
+                <button
+                  onClick={() => {
+                    setActiveParentTab("curriculum");
+                    setActiveTab("activities-manager");
+                  }}
+                  className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                    activeParentTab === "curriculum"
+                      ? "bg-[#2563EB] text-white shadow-sm border-[#2563EB]"
+                      : "bg-white border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569] hover:text-[#0F172A]"
+                  }`}
+                  title="Curriculum & Syllabus"
+                >
+                  <BookOpen size={18} />
+                </button>
+              </div>
 
-            {activeParentTab === "curriculum" && (
-              <>
-                <button
-                  onClick={() => setActiveTab("activities-manager")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                    activeTab === "activities-manager"
-                      ? "bg-[#2563EB]/10 text-[#2563EB]"
-                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                  }`}
-                >
-                  Activities Builder
-                </button>
-                <button
-                  onClick={() => setActiveTab("syllabus")}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
-                    activeTab === "syllabus"
-                      ? "bg-[#2563EB]/10 text-[#2563EB]"
-                      : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
-                  }`}
-                >
-                  Course Syllabus
-                </button>
-              </>
-            )}
-          </div>
-        )}
+              {/* SECONDARY SIDEBAR (Sub-options list) */}
+              <div className={`
+                w-52 shrink-0 flex flex-col gap-2 border-r border-[#E2E8F0] pr-4 lg:border-r
+                ${isSidebarOpen ? "flex" : "hidden lg:flex"}
+              `}>
+                <h4 className="text-[10px] font-bold text-[#475569] uppercase tracking-wider px-2 mb-2">
+                  {activeParentTab === "overview" && "Overview Space"}
+                  {activeParentTab === "students" && "Student Hub"}
+                  {activeParentTab === "assessments" && "Auditing & Grading"}
+                  {activeParentTab === "curriculum" && "Curriculum Space"}
+                </h4>
+                
+                {activeParentTab === "overview" && (
+                  <button
+                    onClick={() => {
+                      setActiveTab("overview");
+                      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                        setIsSidebarOpen(false);
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                      activeTab === "overview"
+                        ? "bg-[#2563EB]/10 text-[#2563EB]"
+                        : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                    }`}
+                  >
+                    Dashboard Overview
+                  </button>
+                )}
+                {activeParentTab === "students" && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setActiveTab("roster");
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "roster"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      Student Directory
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab("delivery");
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "delivery"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      Cohorts & Delivery
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab("attendance" as any);
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "attendance"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      Attendance Tracker
+                    </button>
+                  </>
+                )}
+
+                {activeParentTab === "assessments" && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setActiveTab("auditor");
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "auditor"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      Submissions Auditor
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab("projects");
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "projects"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      <span>Project Validator</span>
+                      {pendingProjectCount > 0 && (
+                        <span className="bg-[#DC2626] text-white px-2 py-0.5 rounded-full text-[9px] font-bold animate-pulse">
+                          {pendingProjectCount}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab("challenges");
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "challenges"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      Challenge Auditor
+                    </button>
+                  </>
+                )}
+
+                {activeParentTab === "curriculum" && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setActiveTab("activities-manager");
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "activities-manager"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      Activities Builder
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab("syllabus");
+                        if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                          setIsSidebarOpen(false);
+                        }
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
+                        activeTab === "syllabus"
+                          ? "bg-[#2563EB]/10 text-[#2563EB]"
+                          : "text-[#475569] hover:text-[#0F172A] hover:bg-[#F8FAFC]"
+                      }`}
+                    >
+                      Course Syllabus
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
 
         {/* Main Content Area */}
         <main className="flex-1 min-w-0 space-y-6">
@@ -2845,6 +2932,18 @@ export default function TeacherConsole({
           {activeTab === "delivery" && (
             <div className="animate-fadeIn">
               <DeliveryManager institutions={assignedInstitutions} initialTab="cohorts" />
+            </div>
+          )}
+
+          {/* TAB: ATTENDANCE TRACKER */}
+          {activeTab === "attendance" && (
+            <div className="animate-fadeIn">
+              <AttendancePanel
+                cohorts={cohorts}
+                students={studentsList}
+                enrollments={enrollments}
+                userRole="teacher"
+              />
             </div>
           )}
 

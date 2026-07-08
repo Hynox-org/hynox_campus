@@ -252,51 +252,53 @@ export default function AdminStudentProgress({ institutions }: AdminStudentProgr
             <div className="text-center py-10 font-bold text-[#86868b] animate-pulse">Syncing student worksheets...</div>
           ) : filteredEnrollments.length > 0 ? (
             <div className="border border-[#d2d2d7] rounded-xl overflow-hidden shadow-xs">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
-                    <th className="px-6 py-3">Student Name</th>
-                    <th className="px-6 py-3">Email Address</th>
-                    <th className="px-6 py-3">Course Completion</th>
-                    <th className="px-6 py-3">Status</th>
-                    <th className="px-6 py-3">Enrolled At</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#d2d2d7]">
-                  {filteredEnrollments.map((enr) => {
-                    const progVal = enr.progress_percentage || 0;
-                    return (
-                      <tr 
-                        key={enr.id} 
-                        onClick={() => {
-                          setSelectedStudent(enr);
-                          setStudentDetailTab("overview");
-                        }}
-                        className="hover:bg-slate-50/50 cursor-pointer transition-colors"
-                      >
-                        <td className="px-6 py-3.5 font-semibold text-[#1d1d1f] hover:text-[#0066cc] transition-colors">{enr.student?.full_name || "N/A"}</td>
-                        <td className="px-6 py-3.5 text-[#86868b]">{enr.student?.email || "N/A"}</td>
-                        <td className="px-6 py-3.5">
-                          <div className="flex items-center gap-2 w-32">
-                            <div className="flex-1 bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                              <div className="bg-[#0066cc] h-full" style={{ width: `${progVal}%` }}></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-[#d2d2d7] font-bold text-[#86868b]">
+                      <th className="px-6 py-3">Student Name</th>
+                      <th className="px-6 py-3">Email Address</th>
+                      <th className="px-6 py-3">Course Completion</th>
+                      <th className="px-6 py-3">Status</th>
+                      <th className="px-6 py-3">Enrolled At</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#d2d2d7]">
+                    {filteredEnrollments.map((enr) => {
+                      const progVal = enr.progress_percentage || 0;
+                      return (
+                        <tr 
+                          key={enr.id} 
+                          onClick={() => {
+                            setSelectedStudent(enr);
+                            setStudentDetailTab("overview");
+                          }}
+                          className="hover:bg-slate-50/50 cursor-pointer transition-colors"
+                        >
+                          <td className="px-6 py-3.5 font-semibold text-[#1d1d1f] hover:text-[#0066cc] transition-colors">{enr.student?.full_name || "N/A"}</td>
+                          <td className="px-6 py-3.5 text-[#86868b]">{enr.student?.email || "N/A"}</td>
+                          <td className="px-6 py-3.5">
+                            <div className="flex items-center gap-2 w-32">
+                              <div className="flex-1 bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                <div className="bg-[#0066cc] h-full" style={{ width: `${progVal}%` }}></div>
+                              </div>
+                              <span className="font-bold shrink-0">{progVal}%</span>
                             </div>
-                            <span className="font-bold shrink-0">{progVal}%</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-3.5">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
-                            enr.status_code === "active" ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-100 text-slate-500"
-                          }`}>
-                            {enr.status_code}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3.5 text-[#86868b] font-mono">{enr.enrolled_at ? enr.enrolled_at.substring(0, 10) : "N/A"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          </td>
+                          <td className="px-6 py-3.5">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                              enr.status_code === "active" ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-100 text-slate-500"
+                            }`}>
+                              {enr.status_code}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5 text-[#86868b] font-mono">{enr.enrolled_at ? enr.enrolled_at.substring(0, 10) : "N/A"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : (
             <div className="text-center py-12 border border-dashed border-[#d2d2d7] rounded-xl text-slate-400 font-semibold bg-slate-50/10">

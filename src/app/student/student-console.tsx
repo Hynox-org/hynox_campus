@@ -25,12 +25,14 @@ import {
   getQuizSessionDetailsAction,
   ensureLessonProjectActivityAction
 } from "@/app/actions/learning-actions";
+import { getStudentAttendanceLogsAction } from "@/app/actions/attendance-actions";
 import Link from "next/link";
 import { 
   Building, 
   GraduationCap, 
   BookOpen, 
   Award, 
+  Calendar,
   CheckCircle,
   Circle,
   Play,
@@ -124,6 +126,30 @@ export default function StudentConsole({
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // Attendance states
+  const [attendancePercentage, setAttendancePercentage] = useState<number | null>(null);
+  const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
+
+  useEffect(() => {
+    const loadAttendance = async () => {
+      const cohortId = selectedProgram?.cohorts?.[0]?.id;
+      if (!cohortId) {
+        setAttendancePercentage(null);
+        setAttendanceLogs([]);
+        return;
+      }
+      setLoadingAttendance(true);
+      const res = await getStudentAttendanceLogsAction(cohortId, studentId);
+      if (res.logs) {
+        setAttendancePercentage(res.logs.percentage);
+        setAttendanceLogs(res.logs.logs);
+      }
+      setLoadingAttendance(false);
+    };
+    loadAttendance();
+  }, [selectedProgram, studentId]);
 
   // Load activities on mount or tab change
   const loadActivities = async () => {
@@ -727,10 +753,10 @@ export default function StudentConsole({
       <div className="flex flex-col md:flex-row gap-6 items-start text-xs">
         
         {/* GROUPED DUAL SIDEBAR */}
-        <div className="flex gap-4 shrink-0 w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row gap-4 shrink-0 w-full md:w-auto">
           
           {/* PRIMARY ICON BAR */}
-          <div className="flex md:flex-col gap-2 shrink-0 bg-white border border-[#E2E8F0] p-2.5 rounded-2xl shadow-sm">
+          <div className="flex sm:flex-col gap-2 shrink-0 bg-white border border-[#E2E8F0] p-2.5 rounded-2xl shadow-sm justify-between sm:justify-start">
             <button
               onClick={() => {
                 setActiveParentTab("overview");
@@ -786,7 +812,7 @@ export default function StudentConsole({
 
           {/* SECONDARY SIDEBAR */}
           {isSidebarOpen && (
-            <div className="w-52 shrink-0 flex flex-col gap-2 border border-[#E2E8F0] bg-white p-4 rounded-2xl shadow-sm">
+            <div className="w-full sm:w-52 shrink-0 flex flex-col gap-2 border border-[#E2E8F0] bg-white p-4 rounded-2xl shadow-sm">
               <h4 className="text-[10px] font-bold text-[#475569] uppercase tracking-wider px-2 mb-2">
                 {activeParentTab === "overview" && "Overview space"}
                 {activeParentTab === "curriculum" && "Syllabus Hub"}
@@ -1120,6 +1146,64 @@ export default function StudentConsole({
                       <span className="font-bold text-[#2563EB]">{averageChallengeScore}%</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Attendance Standings Card */}
+                <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-sm space-y-4">
+                  <h3 className="text-xs font-bold text-[#0F172A] border-b border-[#E2E8F0] pb-2.5 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Calendar className="text-[#2563EB]" size={15} /> Attendance Stats
+                  </h3>
+                  
+                  {loadingAttendance ? (
+                    <div className="text-center py-4 text-[#475569] font-bold animate-pulse">Calculating stats...</div>
+                  ) : attendancePercentage !== null ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[9px] text-[#475569] block font-semibold uppercase tracking-wider">Attendance Rate</span>
+                          <span className="text-xl font-black text-[#0F172A]">{attendancePercentage}%</span>
+                        </div>
+                        
+                        {/* Attendance Warning Badge (>=70% is Good Standing, <70% is Warning) */}
+                        {attendancePercentage >= 70 ? (
+                          <span className="bg-[#16A34A]/10 text-[#16A34A] border border-[#16A34A]/20 px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase tracking-wide">
+                            Good Standing
+                          </span>
+                        ) : (
+                          <span className="bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/20 px-2.5 py-1 rounded-xl text-[10px] font-extrabold uppercase tracking-wide animate-pulse">
+                            Attendance Warning
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Display recent logs */}
+                      <div className="space-y-1.5 border-t border-[#E2E8F0] pt-3 max-h-[160px] overflow-y-auto pr-1">
+                        <span className="text-[9px] font-bold text-[#475569] uppercase tracking-wider block mb-1">Recent Sessions Logs</span>
+                        {attendanceLogs.length === 0 ? (
+                          <span className="text-[10px] text-slate-400 block text-center py-2">No logs recorded yet.</span>
+                        ) : (
+                          attendanceLogs.slice(0, 5).map((log, idx) => (
+                            <div key={idx} className="flex justify-between items-center bg-slate-50 p-1.5 rounded-lg text-[10px] border border-[#E2E8F0]">
+                              <span className="font-semibold text-slate-700">{log.date}</span>
+                              <span className={`px-1.5 py-0.5 rounded-[4px] font-bold uppercase text-[8px] ${
+                                log.status === "present"
+                                  ? "bg-[#16A34A]/10 text-[#16A34A]"
+                                  : log.status === "absent"
+                                  ? "bg-[#DC2626]/10 text-[#DC2626]"
+                                  : log.status === "late"
+                                  ? "bg-[#F59E0B]/10 text-[#F59E0B]"
+                                  : "bg-[#0066cc]/10 text-[#0066cc]"
+                              }`}>
+                                {log.status}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 text-slate-400 text-[10px]">No active cohort attendance logs.</div>
+                  )}
                 </div>
 
               </div>

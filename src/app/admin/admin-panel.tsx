@@ -100,6 +100,13 @@ interface AdminPanelProps {
 
 export default function AdminPanel({ adminEmail, initialInstitutions, initialInvitations = [] }: AdminPanelProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  React.useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setIsSidebarOpen(false);
+    }
+  }, []);
+
   const [activeParentTab, setActiveParentTab] = useState<"institutions" | "onboarding" | "library" | "programs" | "learning_manager">("institutions");
   const [selectedUserDetail, setSelectedUserDetail] = useState<any | null>(null);
 
@@ -1406,7 +1413,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
       
       {/* Top Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-[#d2d2d7]/50 shadow-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-12 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 h-12 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -1420,14 +1427,14 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
             <div className="flex items-center">
               <span className="font-bold text-xs text-[#1d1d1f] tracking-tight title-font">Hynox Campus</span>
-              <span className="bg-[#f5f5f7] text-[#1d1d1f] border border-[#d2d2d7] px-2 py-0.5 rounded-full text-[8px] font-semibold tracking-wider uppercase ml-2">
+              <span className="bg-[#f5f5f7] text-[#1d1d1f] border border-[#d2d2d7] px-2 py-0.5 rounded-full text-[8px] font-semibold tracking-wider uppercase ml-2 hidden sm:inline-block">
                 Admin Console
               </span>
             </div>
           </div>
           
-          <div className="flex items-center gap-5 text-[11px]">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3 sm:gap-5 text-[11px]">
+            <div className="hidden sm:flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-[#0066cc] animate-pulse"></div>
               <span className="text-[#86868b] font-normal">
                 Logged in as: <strong className="text-[#1d1d1f] font-semibold">{adminEmail}</strong>
@@ -1435,10 +1442,11 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             </div>
             <button
               onClick={() => signOutAction()}
-              className="flex items-center gap-1.5 bg-transparent hover:bg-black/5 text-[#1d1d1f] border border-black/15 hover:border-black/30 px-3 py-1 rounded-md transition-all font-medium cursor-pointer"
+              className="flex items-center gap-1.5 bg-transparent hover:bg-black/5 text-[#1d1d1f] border border-black/15 hover:border-black/30 px-2 sm:px-3 py-1 rounded-md transition-all font-medium cursor-pointer shrink-0"
+              title="Sign Out"
             >
               <LogOut size={11} className="text-[#86868b]" />
-              Sign Out
+              <span className="hidden sm:inline">Sign Out</span>
             </button>
           </div>
         </div>
@@ -1446,88 +1454,103 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
 
 
       {/* Main Grid Workspace */}
-      <div className="max-w-7xl mx-auto px-6 py-8 flex gap-8 flex-1 w-full relative">
+      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8 flex flex-col lg:flex-row gap-6 lg:gap-8 flex-1 w-full relative">
         
-        {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
-        <div className="w-14 shrink-0 flex flex-col items-center gap-4 py-2 border-r border-[#d2d2d7]/50 pr-4">
-          <button
-            onClick={() => {
-              setActiveParentTab("institutions");
-              setActiveTab("institutions");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "institutions"
-                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
-                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
-            }`}
-            title="Institutions Space"
-          >
-            <Building size={18} />
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveParentTab("onboarding");
-              setActiveTab("onboarding");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "onboarding"
-                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
-                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
-            }`}
-            title="Onboarding Modules"
-          >
-            <UserCheck size={18} />
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveParentTab("library");
-              setActiveTab("library");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "library"
-                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
-                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
-            }`}
-            title="Library Blueprints"
-          >
-            <BookOpen size={18} />
-          </button>
-          
-          <button
-            onClick={() => {
-              setActiveParentTab("programs");
-              setActiveTab("programs");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "programs"
-                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
-                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
-            }`}
-            title="Programs & Academics"
-          >
-            <GraduationCap size={18} />
-          </button>
-          <button
-            onClick={() => {
-              setActiveParentTab("learning_manager");
-              setActiveTab("create_activity");
-            }}
-            className={`p-3 rounded-xl border transition-all cursor-pointer ${
-              activeParentTab === "learning_manager"
-                ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
-                : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
-            }`}
-            title="Learning Activities"
-          >
-            <Award size={18} />
-          </button>
-        </div>
-
-        {/* SECONDARY SIDEBAR (Sub-options list) */}
+        {/* Mobile Sidebar Drawer Backdrop */}
         {isSidebarOpen && (
-          <div className="w-52 shrink-0 flex flex-col gap-2 border-r border-[#d2d2d7]/50 pr-4">
+          <div 
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 lg:hidden"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
+        {/* Sidebars container - Collapsible drawer on mobile, inline on desktop */}
+        <div className={`
+          fixed inset-y-0 left-0 z-50 bg-white lg:bg-transparent p-4 lg:p-0 border-r border-[#d2d2d7]/50 lg:border-none flex gap-4 transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 lg:z-auto lg:h-auto
+          ${isSidebarOpen ? "translate-x-0" : "-translate-x-full lg:flex lg:translate-x-0"}
+        `}>
+          {/* PRIMARY SIDEBAR (Icon-only, narrow, Supabase-style) */}
+          <div className="w-14 shrink-0 flex flex-col items-center gap-4 py-2 border-r border-[#d2d2d7]/50 pr-4">
+            <button
+              onClick={() => {
+                setActiveParentTab("institutions");
+                setActiveTab("institutions");
+              }}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                activeParentTab === "institutions"
+                  ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                  : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+              }`}
+              title="Institutions Space"
+            >
+              <Building size={18} />
+            </button>
+            
+            <button
+              onClick={() => {
+                setActiveParentTab("onboarding");
+                setActiveTab("onboarding");
+              }}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                activeParentTab === "onboarding"
+                  ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                  : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+              }`}
+              title="Onboarding Modules"
+            >
+              <UserCheck size={18} />
+            </button>
+            
+            <button
+              onClick={() => {
+                setActiveParentTab("library");
+                setActiveTab("library");
+              }}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                activeParentTab === "library"
+                  ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                  : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+              }`}
+              title="Library Blueprints"
+            >
+              <BookOpen size={18} />
+            </button>
+            
+            <button
+              onClick={() => {
+                setActiveParentTab("programs");
+                setActiveTab("programs");
+              }}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                activeParentTab === "programs"
+                  ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                  : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+              }`}
+              title="Programs & Academics"
+            >
+              <GraduationCap size={18} />
+            </button>
+            <button
+              onClick={() => {
+                setActiveParentTab("learning_manager");
+                setActiveTab("create_activity");
+              }}
+              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                activeParentTab === "learning_manager"
+                  ? "bg-[#0066cc] text-white shadow-sm border-[#0066cc]"
+                  : "bg-white border-[#E8E8ED] hover:bg-[#F5F5F7] text-[#86868b] hover:text-[#1d1d1f]"
+              }`}
+              title="Learning Activities"
+            >
+              <Award size={18} />
+            </button>
+          </div>
+
+          {/* SECONDARY SIDEBAR (Sub-options list) */}
+          <div className={`
+            w-52 shrink-0 flex flex-col gap-2 border-r border-[#d2d2d7]/50 pr-4 lg:border-r
+            ${isSidebarOpen ? "flex" : "hidden lg:flex"}
+          `}>
             <h4 className="text-[10px] font-bold text-[#86868b] uppercase tracking-wider px-2 mb-2">
               {activeParentTab} Settings
             </h4>
@@ -1535,7 +1558,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             {activeParentTab === "institutions" && (
               <>
                 <button
-                  onClick={() => setActiveTab("institutions")}
+                  onClick={() => {
+                    setActiveTab("institutions");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "institutions"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1545,7 +1573,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   List Institutions
                 </button>
                 <button
-                  onClick={() => setActiveTab("add_institution")}
+                  onClick={() => {
+                    setActiveTab("add_institution");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "add_institution"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1555,7 +1588,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   Add Institution
                 </button>
                 <button
-                  onClick={() => setActiveTab("explorer")}
+                  onClick={() => {
+                    setActiveTab("explorer");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "explorer"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1570,7 +1608,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             {activeParentTab === "onboarding" && (
               <>
                 <button
-                  onClick={() => setActiveTab("onboarding")}
+                  onClick={() => {
+                    setActiveTab("onboarding");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "onboarding"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1580,7 +1623,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   Onboarding Status
                 </button>
                 <button
-                  onClick={() => setActiveTab("csv")}
+                  onClick={() => {
+                    setActiveTab("csv");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "csv"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1590,7 +1638,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   CSV Onboarding
                 </button>
                 <button
-                  onClick={() => setActiveTab("teacher_mapping")}
+                  onClick={() => {
+                    setActiveTab("teacher_mapping");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "teacher_mapping"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1600,7 +1653,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   Teacher Mapping
                 </button>
                 <button
-                  onClick={() => setActiveTab("super_admin_invite")}
+                  onClick={() => {
+                    setActiveTab("super_admin_invite");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "super_admin_invite"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1615,7 +1673,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             {activeParentTab === "library" && (
               <>
                 <button
-                  onClick={() => setActiveTab("library")}
+                  onClick={() => {
+                    setActiveTab("library");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "library"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1630,7 +1693,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             {activeParentTab === "programs" && (
               <>
                 <button
-                  onClick={() => setActiveTab("programs")}
+                  onClick={() => {
+                    setActiveTab("programs");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "programs"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1640,7 +1708,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   Programs Explorer
                 </button>
                 <button
-                  onClick={() => setActiveTab("examine_programs")}
+                  onClick={() => {
+                    setActiveTab("examine_programs");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "examine_programs"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1650,7 +1723,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   Examine Programs
                 </button>
                 <button
-                  onClick={() => setActiveTab("cohorts")}
+                  onClick={() => {
+                    setActiveTab("cohorts");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "cohorts" || activeTab === "enrollments" || activeTab === "course_assignments"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1660,7 +1738,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   Cohorts & Delivery
                 </button>
                 <button
-                  onClick={() => setActiveTab("program_student_progress")}
+                  onClick={() => {
+                    setActiveTab("program_student_progress");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "program_student_progress"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1675,7 +1758,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
             {activeParentTab === "learning_manager" && (
               <>
                 <button
-                  onClick={() => setActiveTab("create_activity")}
+                  onClick={() => {
+                    setActiveTab("create_activity");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "create_activity"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1685,7 +1773,12 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
                   Create Activity
                 </button>
                 <button
-                  onClick={() => setActiveTab("view_activities")}
+                  onClick={() => {
+                    setActiveTab("view_activities");
+                    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer ${
                     activeTab === "view_activities"
                       ? "bg-[#0066cc]/10 text-[#0066cc]"
@@ -1697,7 +1790,7 @@ export default function AdminPanel({ adminEmail, initialInstitutions, initialInv
               </>
             )}
           </div>
-        )}
+        </div>
 
         {/* Dynamic Wrapper Column to keep code clean */}
         <div style={{ display: 'none' }}>
