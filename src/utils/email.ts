@@ -1,21 +1,11 @@
-import nodemailer from "nodemailer";
+import { BrevoClient } from "@getbrevo/brevo";
 
-const host = process.env.SMTP_HOST || "smtp.gmail.com";
-const port = parseInt(process.env.SMTP_PORT || "587", 10);
-const secure = process.env.SMTP_SECURE === "true";
-const user = process.env.SMTP_USER || "";
-const pass = process.env.SMTP_PASS || "";
-const from = process.env.SMTP_FROM || `"Hynox Campus" <${user}>`;
+const apiKey = process.env.BREVO_API_KEY || "";
+const senderEmail = process.env.BREVO_SENDER_EMAIL || "noreply-campus@hynox.in";
+const senderName = process.env.BREVO_SENDER_NAME || "Hynox Campus";
 
-const transporter = nodemailer.createTransport({
-  host,
-  port,
-  secure,
-  auth: {
-    user,
-    pass,
-  },
-});
+const brevo = new BrevoClient({ apiKey });
+
 
 export async function sendOnboardingEmail(
   toEmail: string,
@@ -192,10 +182,10 @@ export async function sendOnboardingEmail(
     </html>
   `;
 
-  await transporter.sendMail({
-    from,
-    to: toEmail,
+  await brevo.transactionalEmails.sendTransacEmail({
+    sender: { name: senderName, email: senderEmail },
+    to: [{ email: toEmail, name: fullName }],
     subject: `[Hynox Campus] Onboarding Activation for ${institutionName}`,
-    html: htmlContent,
+    htmlContent: htmlContent,
   });
 }
